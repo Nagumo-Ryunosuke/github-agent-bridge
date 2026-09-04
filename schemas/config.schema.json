@@ -22,6 +22,11 @@
       "properties": {
         "work_trigger": {"const": "github-pr"},
         "work_trigger_confirmed": {"type": "boolean"},
+        "work_trigger_repositories": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[^/]+/[^/]+$"},
+          "uniqueItems": true
+        },
         "implementation_branch_prefix": {"type": "string", "minLength": 1},
         "watch_interval_seconds": {"type": "integer", "minimum": 1}
       }
