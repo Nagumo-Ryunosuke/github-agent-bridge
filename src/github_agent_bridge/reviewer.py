@@ -52,6 +52,29 @@ def _run(cmd: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess
     return subprocess.run(cmd, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
 
 
+def ensure_base_is_ancestor(repo: Path, base_commit: str, head_ref: str) -> None:
+    """Reject implementation heads that are not descendants of the pinned task base.
+
+    The local reviewer executes PR code, so the branch-prefix and same-repository
+    checks in the watcher are not sufficient by themselves. The implementation
+    must also preserve the exact task ancestry contract before any PR test command
+    or Codex tool is executed.
+    """
+    proc = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", base_commit, head_ref],
+        cwd=repo,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if proc.returncode != 0:
+        detail = proc.stderr.strip()
+        suffix = f": {detail}" if detail else ""
+        raise ReviewExecutionError(
+            f"implementation head {head_ref} is not a descendant of pinned base {base_commit}{suffix}"
+        )
+
+
 def run_test_commands(worktree: Path, commands: list[str], timeout: int) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for command in commands:
@@ -62,7 +85,7 @@ def run_test_commands(worktree: Path, commands: list[str], timeout: int) -> list
             output = exc.stdout or ""
             if isinstance(output, bytes):
                 output = output.decode(errors="replace")
-            results.append({"command": command, "exit_code": 124, "output": (output + "\nTIMEOUT")[ -8000:]})
+            results.append({"command": command, "exit_code": 124, "output": (output + "\nTIMEOUT")[-8000:]})
     return results
 
 
@@ -112,6 +135,7 @@ def review_pr_head(
     resolved = run_git(repo, "rev-parse", ref)
     if resolved != head_sha:
         raise ReviewExecutionError(f"PR head changed during fetch: expected {head_sha}, got {resolved}")
+    ensure_base_is_ancestor(repo, base_commit, ref)
 
     with tempfile.TemporaryDirectory(prefix="agent-bridge-review-") as tmp:
         worktree = Path(tmp) / "worktree"
