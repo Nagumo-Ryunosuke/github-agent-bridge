@@ -7,7 +7,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from github_agent_bridge.config import bootstrap_config, configure_writer, load_config, save_config
+from github_agent_bridge.config import bootstrap_config, configure_work_trigger, configure_writer, load_config, save_config
 from github_agent_bridge.doctor import doctor_report, parse_github_remote
 
 
@@ -129,7 +129,24 @@ class DoctorCase(unittest.TestCase):
         self.assertTrue(config["github"]["managed"]["write_confirmed"])
         self.assertTrue(config["github"]["managed"]["unattended_confirmed"])
         self.assertTrue(config["automation"]["work_trigger_confirmed"])
+        self.assertEqual(["owner/repo"], config["automation"]["work_trigger_repositories"])
         self.assertEqual(["pytest -q"], config["review"]["test_commands"])
+
+    def test_repository_scope_change_invalidates_writer_and_trigger_confirmation(self) -> None:
+        self.ready_config()
+        configure_writer(self.repo, mode="managed", repositories=["owner/other"])
+        config = load_config(self.repo)
+        self.assertFalse(config["github"]["managed"]["write_confirmed"])
+        self.assertFalse(config["github"]["managed"]["unattended_confirmed"])
+        self.assertFalse(config["automation"]["work_trigger_confirmed"])
+        self.assertEqual([], config["automation"]["work_trigger_repositories"])
+
+    def test_work_trigger_confirmation_snapshots_repository_scope(self) -> None:
+        self.ready_config()
+        configure_work_trigger(self.repo, confirmed=False)
+        configure_work_trigger(self.repo, confirmed=True)
+        config = load_config(self.repo)
+        self.assertEqual(["owner/repo"], config["automation"]["work_trigger_repositories"])
 
     def test_writer_mode_change_resets_confirmation(self) -> None:
         self.ready_config()
