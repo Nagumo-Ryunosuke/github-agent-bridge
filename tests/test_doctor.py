@@ -113,6 +113,22 @@ class DoctorCase(unittest.TestCase):
         self.assertEqual("fail", watcher["status"])
         self.assertFalse(report["zero_touch_ready"])
 
+    def test_far_future_watcher_heartbeat_blocks_zero_touch(self) -> None:
+        self.ready_config()
+        self.write_heartbeat("2026-09-04T08:40:00+00:00")
+        report = self.report()
+        watcher = next(item for item in report["checks"] if item["name"] == "codex_watcher")
+        self.assertEqual("fail", watcher["status"])
+        self.assertIn("future", watcher["message"])
+        self.assertFalse(report["zero_touch_ready"])
+
+    def test_small_clock_skew_is_tolerated(self) -> None:
+        self.ready_config()
+        self.write_heartbeat("2026-09-04T08:31:00+00:00")
+        report = self.report()
+        watcher = next(item for item in report["checks"] if item["name"] == "codex_watcher")
+        self.assertEqual("pass", watcher["status"])
+
     def test_bootstrap_preserves_confirmations_when_omitted(self) -> None:
         self.ready_config()
         bootstrap_config(
