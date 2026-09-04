@@ -69,6 +69,12 @@ def _verify_remote_task_branch(repo: Path, task_id: str, branch: str, base_sha: 
 def _create_or_reuse_task_pr(repo: Path, task_id: str, branch: str, task: dict[str, Any], commit: str) -> dict[str, Any]:
     existing = _view_task_pr(repo, branch)
     if existing:
+        state = str(existing.get("state") or "").upper()
+        if state != "OPEN":
+            raise PublishError(
+                f"existing Task PR #{existing.get('number')} for {branch} is {state or 'not open'}; "
+                "reopen it intentionally or create a new task instead of silently reusing a closed dispatch"
+            )
         return {
             "task_id": task_id,
             "branch": branch,
@@ -85,6 +91,8 @@ def _create_or_reuse_task_pr(repo: Path, task_id: str, branch: str, task: dict[s
     created = _view_task_pr(repo, branch)
     if not created:
         raise PublishError(f"Task branch {branch} was pushed, but the PR could not be resolved")
+    if str(created.get("state") or "").upper() != "OPEN":
+        raise PublishError(f"newly created Task PR #{created.get('number')} is not open")
     return {
         "task_id": task_id,
         "branch": branch,
