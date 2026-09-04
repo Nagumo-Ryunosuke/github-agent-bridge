@@ -62,22 +62,33 @@ agent-bridge setup bootstrap \
   --test-command 'python -m compileall -q src tests'
 ```
 
-Bootstrap initializes `.ai/`, infers the current `owner/repo` from a github.com `origin` when possible, configures Writer/reviewer policy, and prints the one remaining ChatGPT platform step when it is incomplete.
+Bootstrap initializes `.ai/`, infers the current `owner/repo` from a github.com `origin` when possible, configures Writer/reviewer policy, and prints the one remaining ChatGPT platform step when it is incomplete. Re-running bootstrap preserves confirmed state only while the writer backend and repository scope remain unchanged.
 
 Create the two GitHub event-triggered tasks once in **ChatGPT Work on Web, iOS, or Android**. The desktop app can display existing event-triggered tasks but currently cannot create or edit their trigger conditions. After both triggers are saved and authorized:
 
 ```bash
 agent-bridge setup work-trigger --confirm
+```
+
+Start the local reviewer as a persistent process (normally under systemd/Supervisor/another user service):
+
+```bash
+agent-bridge watch
+```
+
+Then, from another shell, verify the real end-to-end state:
+
+```bash
 agent-bridge doctor
 ```
 
-`doctor` verifies the real end-to-end prerequisites instead of trusting config alone: GitHub origin, `gh` authentication, Codex CLI, writer readiness, unattended permission confirmation, repository allowlist, Work triggers, local tests, and trusted branch policy.
+`doctor` verifies the real prerequisites instead of trusting config alone: GitHub origin, `gh` authentication and repository access, Codex CLI, writer readiness, unattended permission confirmation, repository allowlist, repository-scoped Work triggers, local tests, trusted branch policy, and a fresh long-running watcher heartbeat.
 
 ```text
 Zero-touch ready: YES
 ```
 
-is the readiness gate for the unattended development/review loop. Use `agent-bridge doctor --json` from scripts or supervisors.
+is the readiness gate for the unattended development/review loop. Use `agent-bridge doctor --json` from scripts or supervisors. `agent-bridge watch --once` intentionally does not claim service health.
 
 ## Writer modes
 
@@ -96,7 +107,9 @@ agent-bridge setup writer \
   --repository OWNER/REPO
 ```
 
-`--confirm-write` and `--confirm-unattended` are operator attestations: the CLI cannot introspect another ChatGPT session's OAuth/tool-confirmation policy. Do not set them until the connection has actually been tested.
+`--confirm-write` and `--confirm-unattended` are operator attestations: the CLI cannot introspect another ChatGPT session's OAuth/tool-confirmation policy. Do not set them until the connection has actually been tested. If permissions change, revoke the stored attestations with `--clear-write` and/or `--clear-unattended`.
+
+Changing the writer backend or repository scope automatically invalidates stored writer confirmations. Changing repository scope also invalidates the stored Work-trigger confirmation, because those triggers must be verified for the new repository scope.
 
 **Important:** the standard OpenAI-built GitHub app is search/read oriented and should not be treated as a writer merely because all repositories were selected. Managed mode expects a connection that actually exposes write actions.
 
@@ -143,18 +156,14 @@ agent-bridge setup writer --mode managed --repository OWNER/REPO
 agent-bridge setup review --test-command 'pytest -q'
 agent-bridge trigger automation-setup
 agent-bridge setup work-trigger --confirm
+agent-bridge watch
+# from another shell after watcher heartbeat appears:
 agent-bridge doctor
 ```
 
 By default, unattended Codex approval is blocked if no local test command is configured. Use `--allow-no-tests` only when that is intentional.
 
-Keep the local reviewer running on the development machine:
-
-```bash
-agent-bridge watch
-```
-
-For production use, run it under a user service/supervisor so it starts automatically with the machine.
+For production use, run `agent-bridge watch` under a user service/supervisor so it starts automatically with the machine.
 
 ## Starting a task from Codex
 
@@ -213,7 +222,8 @@ The watcher uses `gh` and `codex exec` non-interactively. For each eligible impl
 6. invokes `codex exec --ephemeral` with a structured output schema;
 7. locally validates the final JSON rather than trusting model formatting alone;
 8. posts a machine-marked GitHub comment;
-9. records the reviewed PR head in Git-private state so the same SHA is not reviewed twice.
+9. records the reviewed PR head in Git-private state so the same SHA is not reviewed twice;
+10. writes a Git-private heartbeat after successful long-running polls so `doctor` can verify the reviewer service is alive.
 
 A failing/missing required local test prevents automatic approval even if the model says `APPROVE`.
 
