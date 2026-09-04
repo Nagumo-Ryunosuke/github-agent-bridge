@@ -95,8 +95,16 @@ def _watcher_heartbeat_check(
             "restart `agent-bridge watch` using v1.3 or newer",
         )
     threshold = max(int(config["automation"].get("watch_interval_seconds", 30)) * 3, 120)
-    age_seconds = max(0, int((current_time - heartbeat.astimezone(timezone.utc)).total_seconds()))
-    healthy = age_seconds <= threshold
+    delta_seconds = int((current_time - heartbeat.astimezone(timezone.utc)).total_seconds())
+    if delta_seconds < -threshold:
+        return _check(
+            "codex_watcher",
+            "fail",
+            f"Codex watcher heartbeat is implausibly in the future ({-delta_seconds}s; allowed clock skew {threshold}s)",
+            "synchronize the reviewer machine clock, then restart `agent-bridge watch`",
+        )
+    healthy = delta_seconds <= threshold
+    age_seconds = max(0, delta_seconds)
     return _check(
         "codex_watcher",
         "pass" if healthy else "fail",
