@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -19,7 +21,7 @@ def _run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
 
 
 def parse_github_remote(url: str) -> Optional[dict[str, str]]:
-    value = (url or "").strip()
+    value = (url or "").strip().rstrip("/")
     patterns = [
         r"^https?://(?P<host>[^/]+)/(?P<owner>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?$",
         r"^ssh://git@(?P<host>[^/]+)/(?P<owner>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?$",
@@ -53,14 +55,66 @@ def _check(name: str, status: str, message: str, remediation: str = "", critical
     }
 
 
+def _watcher_heartbeat_check(
+    repo: Path,
+    config: dict[str, Any],
+    runner: CheckRunner,
+    current_time: datetime,
+) -> dict[str, Any]:
+    proc = runner(["git", "rev-parse", "--git-path", "agent-bridge/watcher.json"], repo)
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return _check(
+            "codex_watcher",
+            "fail",
+            "cannot resolve Git-private watcher state",
+            "start `agent-bridge watch` from the repository and keep it running under a supervisor/service",
+        )
+    path = Path(proc.stdout.strip())
+    if not path.is_absolute():
+        path = (repo / path).resolve()
+    if not path.exists():
+        return _check(
+            "codex_watcher",
+            "fail",
+            "no long-running Codex watcher heartbeat has been recorded",
+            "start `agent-bridge watch` and keep it running under a supervisor/service",
+        )
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+        raw = state.get("last_poll_at")
+        heartbeat = datetime.fromisoformat(raw) if isinstance(raw, str) and raw else None
+        if heartbeat and heartbeat.tzinfo is None:
+            heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        heartbeat = None
+    if heartbeat is None:
+        return _check(
+            "codex_watcher",
+            "fail",
+            "watcher state exists but has no valid long-running heartbeat",
+            "restart `agent-bridge watch` using v1.3 or newer",
+        )
+    threshold = max(int(config["automation"].get("watch_interval_seconds", 30)) * 3, 120)
+    age_seconds = max(0, int((current_time - heartbeat.astimezone(timezone.utc)).total_seconds()))
+    healthy = age_seconds <= threshold
+    return _check(
+        "codex_watcher",
+        "pass" if healthy else "fail",
+        f"Codex watcher heartbeat is {age_seconds}s old" if healthy else f"Codex watcher heartbeat is stale ({age_seconds}s old; threshold {threshold}s)",
+        "restart `agent-bridge watch` and configure it as a persistent user service/supervisor process",
+    )
+
+
 def doctor_report(
     repo: Path,
     *,
     runner: CheckRunner = _run,
     which: Which = shutil.which,
+    now: Optional[datetime] = None,
 ) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     config = load_config(repo)
+    current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
 
     initialized = (repo / ".ai/state/tasks.json").exists() and (repo / CONFIG_PATH).exists()
     checks.append(_check(
@@ -92,16 +146,29 @@ def doctor_report(
         ))
 
     gh_path = which("gh")
+    gh_authenticated = False
     if gh_path:
         gh_auth = runner([gh_path, "auth", "status", "-h", "github.com"], repo)
+        gh_authenticated = gh_auth.returncode == 0
         checks.append(_check(
             "github_cli",
-            "pass" if gh_auth.returncode == 0 else "fail",
-            "GitHub CLI is installed and authenticated" if gh_auth.returncode == 0 else "GitHub CLI is installed but not authenticated for github.com",
+            "pass" if gh_authenticated else "fail",
+            "GitHub CLI is installed and authenticated" if gh_authenticated else "GitHub CLI is installed but not authenticated for github.com",
             "run `gh auth login` on the Codex/reviewer machine",
         ))
     else:
         checks.append(_check("github_cli", "fail", "GitHub CLI (`gh`) was not found", "install GitHub CLI and authenticate it"))
+
+    repo_access = False
+    if gh_path and gh_authenticated and repository and host and host.lower() == "github.com":
+        access = runner([gh_path, "repo", "view", repository, "--json", "nameWithOwner"], repo)
+        repo_access = access.returncode == 0
+    checks.append(_check(
+        "github_repo_access",
+        "pass" if repo_access else "fail",
+        f"GitHub CLI can access {repository}" if repo_access else f"GitHub CLI cannot verify access to {repository or '(unknown repository)'}",
+        "grant the authenticated GitHub identity access to this repository and verify with `gh repo view owner/repo`",
+    ))
 
     codex_command = str(config["review"].get("codex_command") or "codex")
     codex_path = which(codex_command)
@@ -168,6 +235,8 @@ def doctor_report(
         f"implementation branches are restricted to `{prefix}*`" if prefix_safe else "implementation branch prefix is missing or unsafe",
         "set automation.implementation_branch_prefix to a dedicated prefix such as `ai/`",
     ))
+
+    checks.append(_watcher_heartbeat_check(repo, config, runner, current_time))
 
     human_merge = bool(config["workflow"].get("human_merge_required", True))
     checks.append(_check(
