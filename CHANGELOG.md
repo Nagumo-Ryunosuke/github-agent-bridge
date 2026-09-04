@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.4.0 - 2026-09-04
+
+Made the Codex side portable across App/CLI/IDE surfaces and added cross-platform persistent watcher service management.
+
+- Added `agent-bridge skill install|status|uninstall` with `user` and `repo` scopes.
+- User Skill installation writes real files to `$HOME/.agents/skills/github-agent-bridge`, allowing Codex App, CLI and IDE clients to share the same Skill discovery scope.
+- Bundled `SKILL.md`, `agents/openai.yaml`, and portable references inside the Python wheel so Skill installation works from an installed package instead of requiring a source checkout.
+- Migrated `agents/openai.yaml` to the current `interface` / `policy` metadata structure for desktop Codex UI compatibility.
+- Added `agent-bridge service install|status|restart|uninstall`.
+- Linux uses a per-user `systemd --user` unit; macOS uses a LaunchAgent; Windows uses a per-user Task Scheduler task with LIMITED run level.
+- Service definitions use the Python interpreter that installed the service and refuse installation if that interpreter cannot import `github_agent_bridge`.
+- Each repository gets an independent service identity and log/state directory so one user can watch multiple repositories.
+- Kept watcher heartbeat/`agent-bridge doctor` as the authoritative runtime readiness signal rather than trusting localized service-manager status alone.
+- Added cross-platform service/Skill tests and expanded GitHub Actions from Linux-only to Windows, macOS, and Linux across Python 3.9/3.11/3.13.
+- Added wheel checks that verify the packaged Skill assets are actually present.
+
 ## 1.3.0 - 2026-09-04
 
 Reduced the remaining one-time setup burden and added an explicit runtime zero-touch readiness gate.
