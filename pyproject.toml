@@ -26,7 +26,7 @@ Homepage = "https://github.com/Nagumo-Ryunosuke/github-agent-bridge"
 Repository = "https://github.com/Nagumo-Ryunosuke/github-agent-bridge"
 
 [project.scripts]
-agent-bridge = "github_agent_bridge.cli:main"
+agent-bridge = "github_agent_bridge.entry:main"
 agent-bridge-mcp = "github_agent_bridge.mcp_server:main"
 
 [tool.setuptools]
