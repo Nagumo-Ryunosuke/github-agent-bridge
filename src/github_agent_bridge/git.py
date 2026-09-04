@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Optional
 
 
 class GitError(RuntimeError):
@@ -21,7 +22,7 @@ def run_git(repo: Path, *args: str, check: bool = True) -> str:
     return proc.stdout.strip()
 
 
-def repo_root(start: Path | None = None) -> Path:
+def repo_root(start: Optional[Path] = None) -> Path:
     start = (start or Path.cwd()).resolve()
     out = run_git(start, "rev-parse", "--show-toplevel")
     return Path(out).resolve()
