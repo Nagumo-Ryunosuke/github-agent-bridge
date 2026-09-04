@@ -13,7 +13,7 @@ from github_agent_bridge.service import (
     service_slug,
     uninstall_service,
 )
-from github_agent_bridge.skill_install import install_skill, skill_status, uninstall_skill
+from github_agent_bridge.skill_install import SkillInstallError, install_skill, skill_status, uninstall_skill
 
 
 class FakeRunner:
@@ -163,10 +163,13 @@ class SkillInstallCase(unittest.TestCase):
         result = install_skill(scope="user", home=self.home)
         path = Path(result["path"])
         self.assertTrue(result["installed"])
+        self.assertTrue(result["managed"])
         self.assertTrue(result["up_to_date"])
+        self.assertFalse(result["modified"])
         self.assertEqual(self.home / ".agents" / "skills" / "github-agent-bridge", path)
         self.assertTrue((path / "SKILL.md").is_file())
         self.assertTrue((path / "agents" / "openai.yaml").is_file())
+        self.assertTrue((path / ".agent-bridge-install.json").is_file())
         self.assertFalse((path / "SKILL.md").is_symlink())
         self.assertTrue(skill_status(scope="user", home=self.home)["up_to_date"])
         self.assertFalse(uninstall_skill(scope="user", home=self.home)["installed"])
@@ -179,13 +182,39 @@ class SkillInstallCase(unittest.TestCase):
             Path(result["path"]),
         )
 
-    def test_skill_reinstall_repairs_modified_copy(self) -> None:
+    def test_modified_managed_copy_requires_force(self) -> None:
         result = install_skill(scope="user", home=self.home)
         skill_md = Path(result["path"]) / "SKILL.md"
         skill_md.write_text("modified\n", encoding="utf-8")
-        self.assertFalse(skill_status(scope="user", home=self.home)["up_to_date"])
-        repaired = install_skill(scope="user", home=self.home)
+        status = skill_status(scope="user", home=self.home)
+        self.assertTrue(status["modified"])
+        self.assertFalse(status["up_to_date"])
+        with self.assertRaises(SkillInstallError):
+            install_skill(scope="user", home=self.home)
+        repaired = install_skill(scope="user", home=self.home, force=True)
         self.assertTrue(repaired["up_to_date"])
+        self.assertFalse(repaired["modified"])
+
+    def test_unmanaged_destination_requires_force(self) -> None:
+        path = self.home / ".agents" / "skills" / "github-agent-bridge"
+        path.mkdir(parents=True)
+        (path / "SKILL.md").write_text("foreign\n", encoding="utf-8")
+        with self.assertRaises(SkillInstallError):
+            install_skill(scope="user", home=self.home)
+        self.assertEqual("foreign\n", (path / "SKILL.md").read_text(encoding="utf-8"))
+        forced = install_skill(scope="user", home=self.home, force=True)
+        self.assertTrue(forced["managed"])
+        self.assertTrue(forced["up_to_date"])
+
+    def test_uninstall_refuses_modified_copy_without_force(self) -> None:
+        result = install_skill(scope="user", home=self.home)
+        path = Path(result["path"])
+        (path / "SKILL.md").write_text("modified\n", encoding="utf-8")
+        with self.assertRaises(SkillInstallError):
+            uninstall_skill(scope="user", home=self.home)
+        self.assertTrue(path.exists())
+        removed = uninstall_skill(scope="user", home=self.home, force=True)
+        self.assertFalse(removed["installed"])
 
 
 if __name__ == "__main__":
