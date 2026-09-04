@@ -4,7 +4,9 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Optional
 
+from .config import configure_review, configure_writer, load_config
 from .core import (
     claim_task,
     complete_task,
@@ -14,29 +16,54 @@ from .core import (
     get_task,
     init_repo,
     load_state,
+    mark_self_reviewed,
     review_task,
     start_task,
     validate_state,
 )
 from .git import GitError, current_branch, head_sha, repo_root
 from .security import validate_ai_tree
+from .publisher import publish_task
+from .triggers import build_chatgpt_work_prompt, build_implementation_pr_body, build_task_pr_body, build_work_automation_setup
+from .watcher import process_once, watch
+from .writers import detect_writer, writer_contract
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="agent-bridge", description="GitHub-native AI agent handoff protocol")
+    parser = argparse.ArgumentParser(prog="agent-bridge", description="GitHub-native ChatGPT development / Codex review automation")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("init", help="Initialize .ai collaboration state")
-    sub.add_parser("status", help="Show active handoff tasks")
+    sub.add_parser("init", help="Initialize .ai collaboration state and config")
+    sub.add_parser("status", help="Show tasks, role routing, and writer status")
+    sub.add_parser("capabilities", help="Show configured GitHub writer capabilities")
+
+    setup = sub.add_parser("setup", help="Configure bridge integrations")
+    setup_sub = setup.add_subparsers(dest="setup_command", required=True)
+    writer = setup_sub.add_parser("writer", help="Configure GitHub writer mode")
+    writer.add_argument("--mode", required=True, choices=["managed", "custom-mcp", "readonly"])
+    writer.add_argument("--connection-name")
+    writer.add_argument("--mcp-server")
+    writer.add_argument("--confirm-write", action="store_true", help="Confirm that the configured connection actually exposes write actions")
+    writer.add_argument("--confirm-unattended", action="store_true", help="Confirm that the current ChatGPT/workspace policy permits those writes without a human confirmation step")
+    writer.add_argument("--repository", action="append", dest="repositories", help="Allowed owner/name repository; repeat to add more")
+
+    review_setup = setup_sub.add_parser("review", help="Configure local Codex validation")
+    review_setup.add_argument("--test-command", action="append", dest="test_commands", help="Trusted local test command; repeat for multiple commands")
+    review_setup.add_argument("--codex-command")
+    review_setup.add_argument("--timeout", type=int)
+    test_policy = review_setup.add_mutually_exclusive_group()
+    test_policy.add_argument("--require-tests", action="store_true", help="Require at least one configured local test command before APPROVE")
+    test_policy.add_argument("--allow-no-tests", action="store_true", help="Allow APPROVE without configured local test commands")
 
     task = sub.add_parser("task", help="Task operations")
     task_sub = task.add_subparsers(dest="task_command", required=True)
 
-    create = task_sub.add_parser("create", help="Create a commit-pinned task contract")
+    create = task_sub.add_parser("create", help="Create a commit-pinned task for ChatGPT development")
     create.add_argument("--title", required=True)
     create.add_argument("--objective", required=True)
-    create.add_argument("--assigned-to", default="codex")
-    create.add_argument("--created-by", default="chatgpt")
+    create.add_argument("--assigned-to", default="chatgpt")
+    create.add_argument("--reviewer", default="codex")
+    create.add_argument("--created-by", default="codex")
     create.add_argument("--priority", default="normal", choices=["low", "normal", "high", "critical"])
     create.add_argument("--base-branch")
     create.add_argument("--target-branch")
@@ -46,33 +73,58 @@ def build_parser() -> argparse.ArgumentParser:
 
     claim = task_sub.add_parser("claim", help="Claim a ready task")
     claim.add_argument("task_id")
-    claim.add_argument("--agent", default="codex")
+    claim.add_argument("--agent", default="chatgpt")
 
-    start = task_sub.add_parser("start", help="Move a claimed task to in_progress")
+    start = task_sub.add_parser("start", help="Move a claimed/changes-requested task to in_progress")
     start.add_argument("task_id")
 
-    finish = task_sub.add_parser("finish", help="Record implementation handoff")
+    self_review = task_sub.add_parser("self-review", help="Record ChatGPT first-pass self-review")
+    self_review.add_argument("task_id")
+    self_review.add_argument("--agent", default="chatgpt")
+
+    finish = task_sub.add_parser("finish", help="Record implementation handoff to Codex")
     finish.add_argument("task_id")
     finish.add_argument("--commit", dest="implementation_commit", required=True)
     finish.add_argument("--branch", required=True)
     finish.add_argument("--pr", type=int)
     finish.add_argument("--summary", required=True)
-    finish.add_argument("--agent", default="codex")
+    finish.add_argument("--agent", default="chatgpt")
 
-    complete = task_sub.add_parser("complete", help="Mark an approved task done")
+    complete = task_sub.add_parser("complete", help="Mark an approved task done after human acceptance/merge")
     complete.add_argument("task_id")
+
+    publish = sub.add_parser("publish", help="Publish automation artifacts to GitHub")
+    publish_sub = publish.add_subparsers(dest="publish_command", required=True)
+    publish_task_cmd = publish_sub.add_parser("task", help="Publish a Task PR from an isolated worktree")
+    publish_task_cmd.add_argument("task_id")
 
     drift = sub.add_parser("drift", help="Compare a task base commit with its base branch")
     drift.add_argument("task_id")
 
-    review = sub.add_parser("review", help="Create a commit-pinned review")
+    review = sub.add_parser("review", help="Record a manual commit-pinned review")
     review.add_argument("task_id")
     review.add_argument("--result", required=True, choices=["approve", "request-changes"])
     review.add_argument("--commit", dest="reviewed_commit", required=True)
     review.add_argument("--summary", required=True)
-    review.add_argument("--reviewer", default="chatgpt")
+    review.add_argument("--reviewer", default="codex")
 
-    sub.add_parser("validate", help="Validate state and scan .ai for likely secrets")
+    trigger = sub.add_parser("trigger", help="Render GitHub/ChatGPT Work trigger artifacts")
+    trigger_sub = trigger.add_subparsers(dest="trigger_command", required=True)
+    task_pr = trigger_sub.add_parser("task-pr", help="Render a task PR body marker")
+    task_pr.add_argument("task_id")
+    impl_pr = trigger_sub.add_parser("implementation-pr", help="Render an implementation PR body marker")
+    impl_pr.add_argument("task_id")
+    impl_pr.add_argument("--summary", default="")
+    trigger_sub.add_parser("automation-setup", help="Render one-time ChatGPT Work event-trigger setup instructions")
+    work_prompt = trigger_sub.add_parser("work-prompt", help="Render the ChatGPT Work prompt for implement/fix")
+    work_prompt.add_argument("task_id")
+    work_prompt.add_argument("--phase", choices=["implement", "fix"], default="implement")
+
+    watcher = sub.add_parser("watch", help="Watch implementation PRs and run Codex local review")
+    watcher.add_argument("--once", action="store_true")
+    watcher.add_argument("--interval", type=int)
+
+    sub.add_parser("validate", help="Validate state/config and scan .ai for likely secrets")
     return parser
 
 
@@ -82,9 +134,13 @@ def _repo() -> Path:
 
 def cmd_status(repo: Path) -> int:
     state = load_state(repo)
+    config = load_config(repo)
+    writer = detect_writer(repo)
     print(f"Repository: {repo.name}")
     print(f"Branch: {current_branch(repo)}")
     print(f"HEAD: {head_sha(repo)}")
+    print(f"Roles: dispatcher={config['workflow']['dispatcher']} developer={config['workflow']['developer']} reviewer={config['workflow']['reviewer']}")
+    print(f"Writer: mode={writer['mode']} ready={writer['ready']} unattended_ready={writer['unattended_ready']}")
     print("\nTasks:")
     if not state["tasks"]:
         print("  (none)")
@@ -94,7 +150,7 @@ def cmd_status(repo: Path) -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         repo = _repo()
@@ -106,6 +162,33 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "status":
             return cmd_status(repo)
+        if args.command == "capabilities":
+            print(json.dumps({"writer": detect_writer(repo), "contract": writer_contract()}, ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "setup" and args.setup_command == "writer":
+            config = configure_writer(
+                repo,
+                mode=args.mode,
+                connection_name=args.connection_name,
+                mcp_server=args.mcp_server,
+                write_confirmed=args.confirm_write,
+                unattended_confirmed=args.confirm_unattended,
+                repositories=args.repositories,
+            )
+            print(json.dumps(config["github"], ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "setup" and args.setup_command == "review":
+            config = configure_review(
+                repo,
+                test_commands=args.test_commands,
+                codex_command=args.codex_command,
+                timeout_seconds=args.timeout,
+                require_tests_for_approval=(
+                    True if args.require_tests else False if args.allow_no_tests else None
+                ),
+            )
+            print(json.dumps(config["review"], ensure_ascii=False, indent=2))
+            return 0
         if args.command == "task":
             if args.task_command == "create":
                 task_id = create_task(
@@ -113,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
                     title=args.title,
                     objective=args.objective,
                     assigned_to=args.assigned_to,
+                    reviewer=args.reviewer,
                     created_by=args.created_by,
                     priority=args.priority,
                     base_branch=args.base_branch,
@@ -131,6 +215,10 @@ def main(argv: list[str] | None = None) -> int:
                 start_task(repo, args.task_id)
                 print(f"{args.task_id}: in_progress")
                 return 0
+            if args.task_command == "self-review":
+                mark_self_reviewed(repo, args.task_id, agent=args.agent)
+                print(f"{args.task_id}: self-review recorded by {args.agent}")
+                return 0
             if args.task_command == "finish":
                 path = finish_task(
                     repo,
@@ -147,31 +235,46 @@ def main(argv: list[str] | None = None) -> int:
                 complete_task(repo, args.task_id)
                 print(f"{args.task_id}: done")
                 return 0
+        if args.command == "publish" and args.publish_command == "task":
+            print(json.dumps(publish_task(repo, args.task_id), ensure_ascii=False, indent=2))
+            return 0
         if args.command == "drift":
             report = drift_report(repo, args.task_id)
             print(json.dumps(report, ensure_ascii=False, indent=2))
-            return 2 if report["drift"] else 0
+            return 2 if report["drift"] and not report.get("metadata_only") else 0
         if args.command == "review":
-            path = review_task(
-                repo,
-                args.task_id,
-                result=args.result,
-                reviewed_commit=args.reviewed_commit,
-                summary=args.summary,
-                reviewer=args.reviewer,
-            )
+            path = review_task(repo, args.task_id, result=args.result, reviewed_commit=args.reviewed_commit, summary=args.summary, reviewer=args.reviewer)
             print(path.relative_to(repo))
+            return 0
+        if args.command == "trigger":
+            if args.trigger_command == "task-pr":
+                print(build_task_pr_body(repo, args.task_id))
+            elif args.trigger_command == "implementation-pr":
+                print(build_implementation_pr_body(repo, args.task_id, args.summary))
+            elif args.trigger_command == "work-prompt":
+                print(build_chatgpt_work_prompt(repo, args.task_id, phase=args.phase))
+            elif args.trigger_command == "automation-setup":
+                print(build_work_automation_setup(repo))
+            return 0
+        if args.command == "watch":
+            if args.once:
+                print(json.dumps(process_once(repo), ensure_ascii=False, indent=2))
+            else:
+                watch(repo, args.interval)
             return 0
         if args.command == "validate":
             errors = validate_state(repo)
             errors.extend(validate_ai_tree(repo))
+            writer = detect_writer(repo)
+            if writer["mode"] != "readonly" and not writer["ready"]:
+                errors.append(f"writer mode {writer['mode']} is selected but not write-ready: {writer['reason']}")
             if errors:
                 for error in errors:
                     print(f"ERROR: {error}")
                 return 1
-            print("OK: handoff state is valid and no obvious secrets were detected in .ai")
+            print("OK: bridge state/config are valid and no obvious secrets were detected in .ai")
             return 0
-    except (RuntimeError, GitError) as exc:
+    except (RuntimeError, GitError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     return 0
