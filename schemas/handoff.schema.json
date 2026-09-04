@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Implementation Handoff Metadata",
+  "type": "object",
+  "required": ["schema_version", "task_id", "agent", "status", "base_commit", "implementation_commit", "branch"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "task_id": {"type": "string", "pattern": "^TASK-[0-9]{6}$"},
+    "agent": {"type": "string", "minLength": 1},
+    "status": {"const": "implementation_completed"},
+    "base_commit": {"type": "string", "minLength": 7},
+    "implementation_commit": {"type": "string", "minLength": 7},
+    "branch": {"type": "string", "minLength": 1},
+    "pr": {"type": ["integer", "null"], "minimum": 1}
+  }
+}
