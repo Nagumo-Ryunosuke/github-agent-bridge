@@ -1,3 +1,6 @@
-display_name: GitHub Agent Bridge
-short_description: ChatGPT implements through GitHub; Codex reviews and validates locally.
-default_prompt: Use GitHub Agent Bridge with GitHub as durable context/event transport, ChatGPT Web or Work as the primary planner/developer, and Codex as the local reviewer and real-environment validator. Prefer automated Task PR dispatch, event-triggered ChatGPT implementation, and exact-SHA Codex review loops.
+interface:
+  display_name: "GitHub Agent Bridge"
+  short_description: "ChatGPT implements through GitHub; Codex reviews and validates locally."
+  default_prompt: "Use GitHub Agent Bridge with GitHub as durable context/event transport, ChatGPT Web or Work as the primary planner/developer, and Codex as the local reviewer and real-environment validator. Prefer automated Task PR dispatch, event-triggered ChatGPT implementation, and exact-SHA Codex review loops."
+policy:
+  allow_implicit_invocation: true
