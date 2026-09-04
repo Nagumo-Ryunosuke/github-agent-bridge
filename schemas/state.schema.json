@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/github-agent-bridge/state.schema.json",
+  "title": "GitHub Agent Bridge State",
+  "type": "object",
+  "required": ["schema_version", "tasks"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "tasks": {
+      "type": "object",
+      "patternProperties": {
+        "^TASK-[0-9]{6}$": {
+          "type": "object",
+          "required": ["task_id", "title", "status", "base", "next_agent"],
+          "properties": {
+            "task_id": {"type": "string", "pattern": "^TASK-[0-9]{6}$"},
+            "title": {"type": "string", "minLength": 1},
+            "status": {"type": "string"},
+            "base": {
+              "type": "object",
+              "required": ["branch", "commit"],
+              "properties": {
+                "branch": {"type": "string", "minLength": 1},
+                "commit": {"type": "string", "minLength": 7}
+              }
+            },
+            "next_agent": {"type": ["string", "null"]}
+          }
+        }
+      }
+    }
+  }
+}
