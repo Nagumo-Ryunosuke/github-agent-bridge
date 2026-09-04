@@ -4,10 +4,12 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from github_agent_bridge.config import configure_writer
 from github_agent_bridge.core import create_task, init_repo
-from github_agent_bridge.reviewer import ReviewExecutionError, ReviewResult
+from github_agent_bridge.publisher import PublishError, _create_or_reuse_task_pr
+from github_agent_bridge.reviewer import ReviewExecutionError, ReviewResult, ensure_base_is_ancestor
 from github_agent_bridge.security import scan_text, validate_ai_tree
 from github_agent_bridge.triggers import (
     build_chatgpt_work_prompt,
@@ -87,6 +89,35 @@ class AutomationCase(unittest.TestCase):
         self.assertIn("agent-bridge:codex-review", text)
         self.assertIn("verdict=REVISE", text)
         self.assertIn("pytest", text)
+
+    def test_pinned_base_must_be_ancestor_of_review_head(self) -> None:
+        base = git(self.repo, "rev-parse", "HEAD")
+        (self.repo / "later.txt").write_text("later\n", encoding="utf-8")
+        subprocess.check_call(["git", "add", "later.txt"], cwd=self.repo)
+        subprocess.check_call(["git", "commit", "-m", "later"], cwd=self.repo, stdout=subprocess.DEVNULL)
+        ensure_base_is_ancestor(self.repo, base, "HEAD")
+
+        tree = git(self.repo, "rev-parse", "HEAD^{tree}")
+        unrelated = subprocess.check_output(
+            ["git", "commit-tree", tree, "-m", "unrelated-root"],
+            cwd=self.repo,
+            text=True,
+        ).strip()
+        with self.assertRaises(ReviewExecutionError):
+            ensure_base_is_ancestor(self.repo, base, unrelated)
+
+    def test_closed_task_pr_is_not_silently_reused(self) -> None:
+        task = {"base": {"branch": "main"}, "title": "T"}
+        with patch("github_agent_bridge.publisher._view_task_pr", return_value={"number": 12, "url": "u", "state": "CLOSED"}):
+            with self.assertRaises(PublishError):
+                _create_or_reuse_task_pr(self.repo, self.task_id, "agent-bridge/task-000001", task, "abcdef1")
+
+    def test_open_task_pr_can_be_reused(self) -> None:
+        task = {"base": {"branch": "main"}, "title": "T"}
+        with patch("github_agent_bridge.publisher._view_task_pr", return_value={"number": 12, "url": "u", "state": "OPEN"}):
+            result = _create_or_reuse_task_pr(self.repo, self.task_id, "agent-bridge/task-000001", task, "abcdef1")
+        self.assertTrue(result["reused"])
+        self.assertEqual(12, result["pr"])
 
     def test_watcher_deduplicates_same_head(self) -> None:
         pr = {"number": 7, "title": "x", "body": implementation_marker(self.task_id), "headRefOid": "abcdef1", "headRefName": "ai/task-000001", "baseRefName": "main", "url": "u", "isCrossRepository": False}
