@@ -51,6 +51,8 @@ Read `references/writer-modes.md`.
 
 The stable writer contract permits repository/file/PR reads plus branch, atomic file commit, PR create/update, and PR comments. It forbids merge, secrets, deletion, and admin operations by default.
 
+Writer confirmations are scoped safety attestations. If the writer backend or repository allowlist changes, treat previous write/unattended confirmation as invalid and re-confirm only after the new scope has actually been tested. Use `--clear-write` / `--clear-unattended` if permissions are revoked.
+
 ## Codex local review policy
 
 Prefer the long-running `agent-bridge watch` process. It watches only marked Implementation PRs.
@@ -69,6 +71,7 @@ For each new eligible PR head SHA:
 10. Post one machine-marked PR comment for that head SHA:
    `<!-- agent-bridge:codex-review task=TASK-XXXXXX verdict=REVISE head=<sha> -->`
 11. Deduplicate by exact head SHA using Git-private local state.
+12. In long-running mode, record a Git-private heartbeat after each successful poll. `watch --once` must not claim persistent reviewer health.
 
 Do not modify ChatGPT's implementation branch during normal review. A `REVISE` comment should route control back to ChatGPT Work, which fixes the PR and pushes a new head. The watcher then reviews the new head automatically.
 
@@ -89,11 +92,15 @@ After both are created, run:
 
 `agent-bridge setup work-trigger --confirm`
 
-Then require:
+Then start the persistent local reviewer:
+
+`agent-bridge watch`
+
+Once the watcher has emitted a fresh heartbeat, require:
 
 `agent-bridge doctor`
 
-before claiming zero-touch operation is ready.
+before claiming zero-touch operation is ready. Work-trigger confirmation must match the current repository scope.
 
 Do not trigger ChatGPT on every implementation commit update; Codex watcher already handles new PR heads. This prevents duplicate ChatGPT jobs and unnecessary usage.
 
@@ -103,11 +110,11 @@ Do not trigger ChatGPT on every implementation commit update; Codex watcher alre
 - Do not place tokens, `.env`, credentials, private keys, or secrets in `.ai/`.
 - `agent-bridge setup review --test-command ...` commands are trusted local commands. PR code can execute through tests; use an appropriate local/container/VM environment.
 - Keep final merge human-controlled by default.
-- Do not set `--confirm-write`, `--confirm-unattended`, or Work-trigger confirmation unless the actual platform behavior has been verified.
+- Do not set `--confirm-write`, `--confirm-unattended`, or Work-trigger confirmation unless the actual platform behavior has been verified for the current repository scope.
 
 ## References
 
-- `references/bootstrap.md` — one-shot setup and zero-touch readiness checks.
+- `references/bootstrap.md` — one-shot setup and runtime zero-touch readiness checks.
 - `references/automation.md` — end-to-end event loop.
 - `references/writer-modes.md` — managed/MCP/readonly choices and permissions.
 - `references/protocol.md` — durable task/handoff state contract.
