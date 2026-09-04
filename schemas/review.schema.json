@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Review Metadata",
+  "type": "object",
+  "required": ["schema_version", "task_id", "reviewer", "result", "reviewed_commit"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "task_id": {"type": "string", "pattern": "^TASK-[0-9]{6}$"},
+    "reviewer": {"type": "string", "minLength": 1},
+    "result": {"enum": ["approve", "request-changes"]},
+    "reviewed_commit": {"type": "string", "minLength": 7}
+  }
+}
