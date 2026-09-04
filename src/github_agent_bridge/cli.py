@@ -50,13 +50,13 @@ def build_parser() -> argparse.ArgumentParser:
     setup_sub = setup.add_subparsers(dest="setup_command", required=True)
 
     bootstrap = setup_sub.add_parser("bootstrap", help="One-shot local setup for the zero-touch workflow")
-    bootstrap.add_argument("--mode", choices=["managed", "custom-mcp", "readonly"], default="managed")
+    bootstrap.add_argument("--mode", choices=["managed", "custom-mcp", "readonly"], help="Defaults to managed on first setup; preserves the current mode on repeated bootstrap")
     bootstrap.add_argument("--connection-name")
     bootstrap.add_argument("--mcp-server")
     bootstrap.add_argument("--confirm-write", action="store_true")
     bootstrap.add_argument("--confirm-unattended", action="store_true")
     bootstrap.add_argument("--confirm-work-trigger", action="store_true", help="Record that the two ChatGPT Work GitHub event triggers were created")
-    bootstrap.add_argument("--repository", action="append", dest="repositories", help="Allowed owner/name repository; defaults to the GitHub origin when detectable")
+    bootstrap.add_argument("--repository", action="append", dest="repositories", help="Allowed owner/name repository; defaults to/merges the GitHub origin when detectable")
     bootstrap.add_argument("--test-command", action="append", dest="test_commands", help="Trusted local test command; repeat for multiple commands")
     bootstrap.add_argument("--codex-command")
     bootstrap.add_argument("--timeout", type=int)
@@ -170,6 +170,10 @@ def _test_policy(args: argparse.Namespace) -> Optional[bool]:
     return None
 
 
+def _optional_confirmation(value: bool) -> Optional[bool]:
+    return True if value else None
+
+
 def cmd_status(repo: Path) -> int:
     state = load_state(repo)
     config = load_config(repo)
@@ -213,23 +217,27 @@ def main(argv: Optional[list[str]] = None) -> int:
             return 0 if report["zero_touch_ready"] else 1
         if args.command == "setup" and args.setup_command == "bootstrap":
             init_repo(repo)
+            existing = load_config(repo)
+            mode = args.mode or (existing["github"]["mode"] if existing["github"]["mode"] != "readonly" else "managed")
             repositories = args.repositories
             if repositories is None:
+                repositories = list(existing["github"].get("repositories") or [])
                 inferred = infer_github_repository(repo)
-                repositories = [inferred["repository"]] if inferred and inferred["host"].lower() == "github.com" else []
+                if inferred and inferred["host"].lower() == "github.com" and inferred["repository"] not in repositories:
+                    repositories.append(inferred["repository"])
             config = bootstrap_config(
                 repo,
-                mode=args.mode,
+                mode=mode,
                 connection_name=args.connection_name,
                 mcp_server=args.mcp_server,
-                write_confirmed=args.confirm_write,
-                unattended_confirmed=args.confirm_unattended,
+                write_confirmed=_optional_confirmation(args.confirm_write),
+                unattended_confirmed=_optional_confirmation(args.confirm_unattended),
                 repositories=repositories,
                 test_commands=args.test_commands,
                 codex_command=args.codex_command,
                 timeout_seconds=args.timeout,
                 require_tests_for_approval=_test_policy(args),
-                work_trigger_confirmed=args.confirm_work_trigger,
+                work_trigger_confirmed=_optional_confirmation(args.confirm_work_trigger),
             )
             report = doctor_report(repo)
             print(json.dumps({"github": config["github"], "review": config["review"], "automation": config["automation"]}, ensure_ascii=False, indent=2))
@@ -244,8 +252,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                 mode=args.mode,
                 connection_name=args.connection_name,
                 mcp_server=args.mcp_server,
-                write_confirmed=args.confirm_write,
-                unattended_confirmed=args.confirm_unattended,
+                write_confirmed=_optional_confirmation(args.confirm_write),
+                unattended_confirmed=_optional_confirmation(args.confirm_unattended),
                 repositories=args.repositories,
             )
             print(json.dumps(config["github"], ensure_ascii=False, indent=2))
