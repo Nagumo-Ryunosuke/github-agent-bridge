@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "github-agent-bridge"
+version = "1.0.0"
+description = "GitHub transport bridge for commit-pinned collaboration between ChatGPT Web, Codex, and other coding agents."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name = "Nagumo-Ryunosuke"}]
+keywords = ["codex", "chatgpt", "agent", "bridge", "handoff", "github", "skills"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "License :: OSI Approved :: MIT License",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Nagumo-Ryunosuke/github-agent-bridge"
+Repository = "https://github.com/Nagumo-Ryunosuke/github-agent-bridge"
+
+[project.scripts]
+agent-bridge = "github_agent_bridge.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
