@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GitHub Agent Bridge Config",
+  "type": "object",
+  "required": ["schema_version", "workflow", "github", "automation", "review"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "github": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {"mode": {"enum": ["managed", "custom-mcp", "readonly"]}}
+    }
+  }
+}
