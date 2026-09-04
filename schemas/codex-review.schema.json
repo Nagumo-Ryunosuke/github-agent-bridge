@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Codex Local Review",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "summary", "findings"],
+  "properties": {
+    "verdict": {"enum": ["APPROVE", "REVISE"]},
+    "summary": {"type": "string", "minLength": 1},
+    "findings": {"type": "array"},
+    "tests": {"type": "array"}
+  }
+}

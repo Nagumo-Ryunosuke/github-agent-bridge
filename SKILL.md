@@ -1,73 +1,100 @@
 ---
 name: github-agent-bridge
-description: Coordinate ChatGPT, Codex, and other coding agents through a GitHub repository using commit-pinned task contracts, durable handoff reports, review artifacts, and a machine-readable workflow state. Use when agents need to exchange plans, implementation results, blockers, or reviews without relying on shared chat history; when a task must be pinned to an exact branch/commit; or when the user wants GitHub to be the single source of truth for cross-agent work.
+description: Automate GitHub-mediated software development where Codex performs local requirement analysis and real-environment review, ChatGPT Web/Work performs architecture, primary implementation, tests, and first self-review, and GitHub provides durable context/events. Use when the user wants Codex and ChatGPT to collaborate with minimal manual prompt copying, needs tasks pinned to exact commits, wants ChatGPT to write implementation PRs through a managed/MCP writer, or wants Codex to automatically review each new PR head and run local tests.
 ---
 
 # GitHub Agent Bridge
 
-Use Git and repository-local `.ai/` files as the durable coordination layer between independent AI agents.
+Treat this role split as the default architecture:
 
-## Core rules
+- **GitHub** = communication, durable context, PR/event transport, exact SHA identity.
+- **ChatGPT Web/Work** = architecture, high-quality reasoning, primary code implementation, test authoring, first self-review.
+- **Codex** = local repository reconnaissance/dispatch, second review, real test execution, debugging, adversarial verification.
+- **Human** = final merge/acceptance.
 
-1. Treat repository state, exact commit SHAs, PRs, and CI as authoritative. Chat history is advisory only.
-2. Before acting on a task, read `.ai/state/tasks.json`, the task file, relevant `.ai/context/*`, and repository-local instructions such as `AGENTS.md`.
-3. Never implement a task before checking its pinned `base.commit` against the current base branch. Run `agent-bridge drift TASK-XXXXXX`.
-4. Never review an implementation without anchoring the review to the exact implementation commit.
-5. Every implementation that requests review must create a handoff report.
-6. Never silently overwrite another agent's conclusion. Add a new task, handoff, review, or ADR instead.
-7. Do not put credentials, tokens, `.env` contents, private keys, or unnecessary private data into `.ai/`.
-8. Run `agent-bridge validate` before committing collaboration artifacts.
+Do not silently invert these roles. Codex should not become the primary implementer unless ChatGPT write capability is unavailable or the user explicitly asks for a local fallback.
 
-## Startup workflow
+## On a new development request in Codex
 
-1. Verify the CLI exists: `agent-bridge --help`.
-2. Run `agent-bridge status`.
-3. Read the task whose `next_agent` matches the current agent.
-4. Read `.ai/context/constraints.md` and any relevant architecture/project context.
-5. Run `agent-bridge drift <TASK_ID>` before implementation or review.
+1. Inspect the real local repository, relevant instructions, tests, architecture, and constraints.
+2. Summarize the task into a narrow implementable contract; do not spend tokens implementing the full change yet.
+3. Ensure `agent-bridge init` has been run.
+4. Run `agent-bridge capabilities`.
+5. Create a commit-pinned task with ChatGPT as developer and Codex as reviewer.
+6. Run `agent-bridge drift <TASK>` before dispatch. Treat code drift as a replanning signal; `.ai/`-only drift is metadata and may be safe.
+7. Run `agent-bridge validate`.
+8. Publish automatically with `agent-bridge publish task <TASK>` rather than asking the user to manually create a PR.
+9. Stop local implementation work and let the GitHub event-triggered ChatGPT Work task take ownership.
 
-## ChatGPT planning workflow
+## ChatGPT Work implementation policy
 
-When ChatGPT is responsible for architecture/planning:
+When a Task PR event wakes ChatGPT:
 
-1. Inspect current repository facts before writing the task.
-2. Create a task with an explicit objective, assigned agent, and target branch when known:
-   `agent-bridge task create --title "..." --objective "..." --assigned-to codex --target-branch codex/...`
-3. Expand `.ai/tasks/<TASK_ID>.md` with concrete requirements, constraints, acceptance criteria, and deliverables.
-4. Commit/push the task artifact so Codex can retrieve it from GitHub.
+1. Read the Task PR, `.ai/tasks/<TASK>.md`, context, repository instructions, and exact pinned base.
+2. Use the highest suitable available reasoning model; never hard-code one historical model name into the protocol.
+3. Design the solution before editing.
+4. Create the implementation branch from the **exact pinned base commit**, not simply from the current branch head.
+5. Implement the change and tests.
+6. Perform a first self-review of the exact diff. Fix obvious correctness, regression, security, concurrency, compatibility, and maintainability issues before handoff.
+7. Use the configured writer (`managed` or `custom-mcp`) to commit/push and create/update the Implementation PR.
+8. Put `<!-- agent-bridge:implementation task=TASK-XXXXXX -->` in the PR body.
+9. Never merge the PR.
+10. If writer capability is missing, do not pretend a push occurred. Produce a patch/artifact and report the capability gap.
 
-## Codex implementation workflow
+## Writer modes
 
-1. Run `agent-bridge status` and locate a ready task assigned to Codex.
-2. Run `agent-bridge drift <TASK_ID>`. If drift affects relevant files, stop and mark the task stale or request replanning rather than blindly implementing an old plan.
-3. Claim and start the task:
-   `agent-bridge task claim <TASK_ID> --agent codex`
-   `agent-bridge task start <TASK_ID>`
-4. Implement and validate locally.
-5. Commit the implementation and preferably open a PR.
-6. Record the handoff:
-   `agent-bridge task finish <TASK_ID> --commit <SHA> --branch <BRANCH> --pr <N> --summary "..."`
-7. Enrich the handoff file with exact validation commands, high-signal changed files, risks, and reviewer questions.
-8. Run `agent-bridge validate`, then commit/push the handoff/state update.
+Read `references/writer-modes.md`.
 
-## ChatGPT review workflow
+- `managed`: a pre-connected write-capable GitHub app/connection authorized once for the permitted repositories. The standard read-oriented GitHub app alone is not sufficient.
+- `custom-mcp`: a user-provided remote MCP writer. This repository includes the optional `agent-bridge-mcp` adapter.
+- `readonly`: planning/patch fallback only.
 
-1. Read the task, implementation handoff, PR/diff, and CI evidence.
-2. Confirm the implementation commit equals the commit recorded in task state.
-3. Review that exact commit.
-4. Record one result:
-   - approve: `agent-bridge review <TASK_ID> --result approve --commit <SHA> --summary "..."`
-   - request changes: `agent-bridge review <TASK_ID> --result request-changes --commit <SHA> --summary "..."`
-5. Add concrete Critical/Major/Minor findings to the review artifact.
-6. Commit/push the review/state update.
-7. After human merge/acceptance, use `agent-bridge task complete <TASK_ID>`.
+The stable writer contract permits repository/file/PR reads plus branch, atomic file commit, PR create/update, and PR comments. It forbids merge, secrets, deletion, and admin operations by default.
 
-## Context drift
+## Codex local review policy
 
-A task is pinned to a base branch and commit. If the base branch advances, `agent-bridge drift` reports the new commit and files changed since task creation. Treat drift in files relevant to the task as a replanning signal.
+Prefer the long-running `agent-bridge watch` process. It watches only marked Implementation PRs.
+
+For each new eligible PR head SHA:
+
+1. Reject cross-repository PRs.
+2. Enforce the trusted implementation branch prefix (`ai/` by default).
+3. Fetch the exact PR head into an isolated temporary worktree.
+4. Run the configured trusted local test commands.
+5. Invoke non-interactive `codex exec --ephemeral` for adversarial review of the exact diff and relevant surrounding code.
+6. Require structured `APPROVE` or `REVISE` output and validate that JSON locally.
+7. Treat actual test output as authoritative; model-reported test results cannot overwrite it.
+8. If required tests are missing or fail, do not approve.
+9. Post one machine-marked PR comment for that head SHA:
+   `<!-- agent-bridge:codex-review task=TASK-XXXXXX verdict=REVISE head=<sha> -->`
+10. Deduplicate by exact head SHA using Git-private local state.
+
+Do not modify ChatGPT's implementation branch during normal review. A `REVISE` comment should route control back to ChatGPT Work, which fixes the PR and pushes a new head. The watcher then reviews the new head automatically.
+
+## One-time automation setup
+
+Run:
+
+`agent-bridge trigger automation-setup`
+
+Configure two event-triggered ChatGPT Work tasks:
+
+1. Task PR opened/ready + `agent-bridge:task` marker → implementation workflow.
+2. New PR comment + `agent-bridge:codex-review` + `verdict=REVISE` → fix workflow.
+
+Do not trigger ChatGPT on every implementation commit update; Codex watcher already handles new PR heads. This prevents duplicate ChatGPT jobs and unnecessary usage.
+
+## Safety and validation
+
+- Run `agent-bridge validate` before publishing `.ai` artifacts.
+- Do not place tokens, `.env`, credentials, private keys, or secrets in `.ai/`.
+- `agent-bridge setup review --test-command ...` commands are trusted local commands. PR code can execute through tests; use an appropriate local/container/VM environment.
+- Keep final merge human-controlled by default.
+- Do not set `--confirm-write` or `--confirm-unattended` unless the actual ChatGPT connection/workspace behavior has been verified.
 
 ## References
 
-- Read `references/protocol.md` for the state machine and artifact contract.
-- Read `references/security.md` before exposing private repositories or generating shared context.
-- Read `references/prior-art.md` when evaluating overlap with other handoff skills.
+- `references/automation.md` — end-to-end event loop.
+- `references/writer-modes.md` — managed/MCP/readonly choices and permissions.
+- `references/protocol.md` — durable task/handoff state contract.
+- `references/security.md` — collaboration-data safety.

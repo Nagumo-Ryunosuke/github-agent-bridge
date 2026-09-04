@@ -2,17 +2,18 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Task Contract Metadata",
   "type": "object",
-  "required": ["schema_version", "task_id", "title", "created_by", "assigned_to", "status", "base_branch", "base_commit"],
+  "required": ["schema_version", "task_id", "title", "created_by", "developer", "reviewer", "status", "base_branch", "base_commit", "target_branch"],
   "properties": {
     "schema_version": {"const": 1},
     "task_id": {"type": "string", "pattern": "^TASK-[0-9]{6}$"},
     "title": {"type": "string", "minLength": 1},
     "created_by": {"type": "string", "minLength": 1},
-    "assigned_to": {"type": "string", "minLength": 1},
+    "developer": {"type": "string", "minLength": 1},
+    "reviewer": {"type": "string", "minLength": 1},
     "status": {"const": "ready"},
     "priority": {"enum": ["low", "normal", "high", "critical"]},
     "base_branch": {"type": "string", "minLength": 1},
     "base_commit": {"type": "string", "minLength": 7},
-    "target_branch": {"type": ["string", "null"]}
+    "target_branch": {"type": "string", "minLength": 1}
   }
 }
