@@ -142,6 +142,10 @@ Prompt: Identify the TASK id and reviewed head from the machine marker, read the
 After both tasks are saved and authorized, run:
 
     agent-bridge setup work-trigger --confirm
+    agent-bridge watch
+
+Keep the watcher running under a persistent user service/supervisor. Then, from another shell after a heartbeat is recorded:
+
     agent-bridge doctor
 
 Configured writer mode: {config['github']['mode']}.
