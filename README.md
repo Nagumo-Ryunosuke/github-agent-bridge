@@ -46,6 +46,39 @@ Codex local review
 
 The live implementation truth is the **GitHub PR head SHA**. Task contracts remain pinned to a base commit; local watcher deduplication is stored under Git's private metadata rather than committed into `.ai/`.
 
+## Fast setup: bootstrap + doctor
+
+Install the CLI, then use the one-shot bootstrap path:
+
+```bash
+python -m pip install -e .
+
+agent-bridge setup bootstrap \
+  --mode managed \
+  --connection-name github-agent-bridge-writer \
+  --confirm-write \
+  --confirm-unattended \
+  --test-command 'python -m unittest discover -s tests -v' \
+  --test-command 'python -m compileall -q src tests'
+```
+
+Bootstrap initializes `.ai/`, infers the current `owner/repo` from a github.com `origin` when possible, configures Writer/reviewer policy, and prints the one remaining ChatGPT platform step when it is incomplete.
+
+Create the two GitHub event-triggered tasks once in **ChatGPT Work on Web, iOS, or Android**. The desktop app can display existing event-triggered tasks but currently cannot create or edit their trigger conditions. After both triggers are saved and authorized:
+
+```bash
+agent-bridge setup work-trigger --confirm
+agent-bridge doctor
+```
+
+`doctor` verifies the real end-to-end prerequisites instead of trusting config alone: GitHub origin, `gh` authentication, Codex CLI, writer readiness, unattended permission confirmation, repository allowlist, Work triggers, local tests, and trusted branch policy.
+
+```text
+Zero-touch ready: YES
+```
+
+is the readiness gate for the unattended development/review loop. Use `agent-bridge doctor --json` from scripts or supervisors.
+
 ## Writer modes
 
 ChatGPT needs a write path to turn its design into an implementation PR. The bridge exposes three modes:
@@ -86,6 +119,7 @@ agent-bridge setup writer \
   --mode custom-mcp \
   --mcp-server github-agent-bridge-writer \
   --confirm-write \
+  --confirm-unattended \
   --repository OWNER/REPO
 ```
 
@@ -99,37 +133,22 @@ ChatGPT can plan/review and produce patches/artifacts, but it must not claim tha
 agent-bridge setup writer --mode readonly
 ```
 
-## One-time setup
+## Manual setup controls
 
-Install the CLI in the repository environment:
+The individual setup commands remain available for advanced deployments:
 
 ```bash
-python -m pip install -e .
 agent-bridge init
-```
-
-Configure authoritative local validation. These commands are trusted and will execute against implementation PR code:
-
-```bash
-agent-bridge setup review \
-  --test-command 'python -m unittest discover -s tests -v' \
-  --test-command 'python -m compileall -q src tests'
+agent-bridge setup writer --mode managed --repository OWNER/REPO
+agent-bridge setup review --test-command 'pytest -q'
+agent-bridge trigger automation-setup
+agent-bridge setup work-trigger --confirm
+agent-bridge doctor
 ```
 
 By default, unattended Codex approval is blocked if no local test command is configured. Use `--allow-no-tests` only when that is intentional.
 
-Configure a writer mode, then print the two ChatGPT Work event-trigger definitions:
-
-```bash
-agent-bridge trigger automation-setup
-```
-
-Create them once in ChatGPT Work:
-
-1. **Task PR trigger** — PR opened/ready and body contains `agent-bridge:task` → ChatGPT implements.
-2. **Codex review-comment trigger** — new PR comment contains `agent-bridge:codex-review` and `verdict=REVISE` → ChatGPT fixes.
-
-Finally, keep the local reviewer running on the development machine:
+Keep the local reviewer running on the development machine:
 
 ```bash
 agent-bridge watch
@@ -188,12 +207,13 @@ The watcher uses `gh` and `codex exec` non-interactively. For each eligible impl
 
 1. rejects cross-repository PRs;
 2. enforces the configured trusted implementation branch prefix (`ai/` by default);
-3. fetches the exact PR head into a temporary worktree;
-4. runs configured local test commands;
-5. invokes `codex exec --ephemeral` with a structured output schema;
-6. locally validates the final JSON rather than trusting model formatting alone;
-7. posts a machine-marked GitHub comment;
-8. records the reviewed PR head in Git-private state so the same SHA is not reviewed twice.
+3. verifies the PR head descends from the task's pinned base commit;
+4. fetches the exact PR head into a temporary worktree;
+5. runs configured local test commands;
+6. invokes `codex exec --ephemeral` with a structured output schema;
+7. locally validates the final JSON rather than trusting model formatting alone;
+8. posts a machine-marked GitHub comment;
+9. records the reviewed PR head in Git-private state so the same SHA is not reviewed twice.
 
 A failing/missing required local test prevents automatic approval even if the model says `APPROVE`.
 
@@ -217,13 +237,15 @@ Actions        read
 
 Do not grant repository administration, secrets, deletion, or merge capabilities merely to make setup easier.
 
-Also note that running tests from a PR executes that PR's code on your local machine. The watcher therefore refuses cross-repository PRs and enforces a trusted implementation branch prefix, but you should still run it on a machine/environment appropriate for code execution.
+Also note that running tests from a PR executes that PR's code on your local machine. The watcher therefore refuses cross-repository PRs and enforces a trusted implementation branch prefix and pinned-base ancestry, but you should still run it on a machine/environment appropriate for code execution.
 
 ## Useful commands
 
 ```bash
 agent-bridge status
 agent-bridge capabilities
+agent-bridge doctor
+agent-bridge doctor --json
 agent-bridge drift TASK-000001
 agent-bridge trigger task-pr TASK-000001
 agent-bridge trigger implementation-pr TASK-000001
@@ -234,11 +256,12 @@ agent-bridge validate
 ## Current platform constraints
 
 - GitHub PR activity can be used for event-triggered ChatGPT Work tasks for eligible ChatGPT plans.
+- Event-triggered Work tasks can currently be created/edited on Web and supported mobile apps; desktop can display existing tasks but cannot create/edit trigger conditions.
 - OpenAI-built apps are currently search/read oriented; write/modify actions require an appropriate write-capable/custom app path.
 - Full custom MCP write support in ChatGPT is plan/workspace dependent. If it is unavailable, use managed mode with a compatible writer or fall back to readonly mode.
 - ChatGPT may still request confirmation for write actions depending on app permissions, workspace-agent controls, and action context. `unattended_ready` is therefore an explicit operator confirmation, not a guarantee inferred by this CLI.
 
-See `references/automation.md` and `references/writer-modes.md`.
+See `references/bootstrap.md`, `references/automation.md`, and `references/writer-modes.md`.
 
 ## License
 
