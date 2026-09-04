@@ -7,8 +7,33 @@
     "schema_version": {"const": 1},
     "github": {
       "type": "object",
-      "required": ["mode"],
-      "properties": {"mode": {"enum": ["managed", "custom-mcp", "readonly"]}}
+      "required": ["mode", "repositories"],
+      "properties": {
+        "mode": {"enum": ["managed", "custom-mcp", "readonly"]},
+        "repositories": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[^/]+/[^/]+$"},
+          "uniqueItems": true
+        }
+      }
+    },
+    "automation": {
+      "type": "object",
+      "properties": {
+        "work_trigger": {"const": "github-pr"},
+        "work_trigger_confirmed": {"type": "boolean"},
+        "implementation_branch_prefix": {"type": "string", "minLength": 1},
+        "watch_interval_seconds": {"type": "integer", "minimum": 1}
+      }
+    },
+    "review": {
+      "type": "object",
+      "properties": {
+        "test_commands": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "codex_command": {"type": "string", "minLength": 1},
+        "timeout_seconds": {"type": "integer", "minimum": 1},
+        "require_tests_for_approval": {"type": "boolean"}
+      }
     }
   }
 }
