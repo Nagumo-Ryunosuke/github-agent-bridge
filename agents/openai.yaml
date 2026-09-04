@@ -1,3 +1,3 @@
 display_name: GitHub Agent Bridge
-short_description: Coordinate AI agents through commit-pinned GitHub handoffs.
-default_prompt: Use GitHub Agent Bridge to inspect the repository's .ai state, detect the next agent action, validate commit context, and perform the appropriate task, implementation handoff, or review workflow.
+short_description: ChatGPT implements through GitHub; Codex reviews and validates locally.
+default_prompt: Use GitHub Agent Bridge with GitHub as durable context/event transport, ChatGPT Web or Work as the primary planner/developer, and Codex as the local reviewer and real-environment validator. Prefer automated Task PR dispatch, event-triggered ChatGPT implementation, and exact-SHA Codex review loops.
