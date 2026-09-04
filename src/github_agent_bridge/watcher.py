@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from .config import load_config
-from .core import get_task
+from .core import get_task, now_iso
 from .reviewer import ReviewResult, review_pr_head
 from .triggers import codex_review_marker, parse_codex_review_marker, parse_implementation_marker
 
@@ -140,6 +140,7 @@ def process_once(
     prs: Optional[list[dict[str, Any]]] = None,
     reviewer: Callable[..., ReviewResult] = review_pr_head,
     poster: Callable[[Path, int, str], None] = post_review_comment,
+    record_heartbeat: bool = False,
 ) -> list[dict[str, Any]]:
     """Review each marked implementation PR head exactly once.
 
@@ -182,6 +183,9 @@ def process_once(
         state["reviewed_heads"][key] = head_sha
         save_watcher_state(repo, state)
         events.append({"task_id": task_id, "pr": int(pr["number"]), "head_sha": head_sha, "verdict": result.verdict})
+    if record_heartbeat:
+        state["last_poll_at"] = now_iso()
+        save_watcher_state(repo, state)
     return events
 
 
@@ -190,7 +194,7 @@ def watch(repo: Path, interval: Optional[int] = None) -> None:
     sleep_for = interval or int(config["automation"]["watch_interval_seconds"])
     while True:
         try:
-            events = process_once(repo)
+            events = process_once(repo, record_heartbeat=True)
             for event in events:
                 print(json.dumps(event, ensure_ascii=False), flush=True)
         except KeyboardInterrupt:

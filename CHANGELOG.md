@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.3.0 - 2026-09-04
+
+Reduced the remaining one-time setup burden and added an explicit runtime zero-touch readiness gate.
+
+- Added `agent-bridge setup bootstrap` to configure writer mode, repository allowlist, Codex review commands, test policy, and Work-trigger confirmation in one pass.
+- Bootstrap automatically infers the current `owner/repo` from a github.com `origin` when `--repository` is omitted and preserves existing setup on repeated runs.
+- Added `agent-bridge setup work-trigger --confirm|--clear` to persist the one platform step that cannot currently be created through a public CLI/API.
+- Work-trigger confirmation is bound to the configured repository scope instead of being a global boolean.
+- Writer write/unattended confirmations are invalidated when writer backend or repository scope changes and can be explicitly revoked with `--clear-write` / `--clear-unattended`.
+- Added `agent-bridge doctor` with human-readable and JSON diagnostics.
+- Doctor validates bridge initialization, github.com origin, `gh` installation/authentication, actual `gh` repository access, Codex CLI availability, writer/write-unattended readiness, repository allowlisting, repository-scoped ChatGPT Work trigger confirmation, authoritative local test policy, implementation branch prefix, and the human merge safety gate.
+- Added a Git-private heartbeat written only by the long-running Codex watcher; stale/missing watcher heartbeat prevents `zero_touch_ready=true`. `watch --once` intentionally does not claim service health.
+- Added aggregate `zero_touch_ready` status so automation can refuse to claim a fully unattended workflow before all critical capabilities are present.
+- Updated Work-trigger instructions to reflect that event-triggered tasks are created on ChatGPT Web/iOS/Android; desktop can view existing tasks but cannot currently create/edit trigger conditions.
+- Tightened repository configuration validation and config schema coverage.
+
 ## 1.2.0 - 2026-09-04
 
 Shifted the bridge to the target developer/reviewer split and added event-driven automation.
