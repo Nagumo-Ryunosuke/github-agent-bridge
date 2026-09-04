@@ -33,6 +33,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "automation": {
         "work_trigger": "github-pr",
         "work_trigger_confirmed": False,
+        "work_trigger_repositories": [],
         "watch_interval_seconds": 30,
         "implementation_marker": "agent-bridge:implementation",
         "implementation_branch_prefix": "ai/",
@@ -74,6 +75,17 @@ def save_config(repo: Path, config: dict[str, Any]) -> Path:
     return path
 
 
+def _normalize_repositories(repositories: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for repository in repositories:
+        value = repository.strip()
+        if not value or value.count("/") != 1:
+            raise RuntimeError(f"repository must be owner/name: {repository}")
+        if value not in normalized:
+            normalized.append(value)
+    return normalized
+
+
 def configure_writer(
     repo: Path,
     *,
@@ -87,26 +99,30 @@ def configure_writer(
     if mode not in {"managed", "custom-mcp", "readonly"}:
         raise RuntimeError("writer mode must be managed, custom-mcp, or readonly")
     config = load_config(repo)
-    previous_mode = config["github"]["mode"]
-    config["github"]["mode"] = mode
+    github = config["github"]
+    previous_mode = github["mode"]
+    previous_repositories = list(github.get("repositories") or [])
+    github["mode"] = mode
+
+    scope_changed = False
     if repositories is not None:
-        normalized = []
-        for repository in repositories:
-            value = repository.strip()
-            if not value or value.count("/") != 1:
-                raise RuntimeError(f"repository must be owner/name: {repository}")
-            if value not in normalized:
-                normalized.append(value)
-        config["github"]["repositories"] = normalized
+        normalized = _normalize_repositories(repositories)
+        scope_changed = normalized != previous_repositories
+        github["repositories"] = normalized
+    if scope_changed:
+        config["automation"]["work_trigger_confirmed"] = False
+        config["automation"]["work_trigger_repositories"] = []
 
     mode_changed = mode != previous_mode
     if mode == "managed":
-        managed = config["github"]["managed"]
+        managed = github["managed"]
+        previous_connection = managed.get("connection_name")
         if connection_name is not None:
             managed["connection_name"] = connection_name or "github-agent-bridge-writer"
         elif not managed.get("connection_name"):
             managed["connection_name"] = "github-agent-bridge-writer"
-        if mode_changed:
+        backend_changed = managed.get("connection_name") != previous_connection
+        if mode_changed or scope_changed or backend_changed:
             managed["write_confirmed"] = False
             managed["unattended_confirmed"] = False
         if write_confirmed is not None:
@@ -114,14 +130,16 @@ def configure_writer(
         if unattended_confirmed is not None:
             managed["unattended_confirmed"] = bool(unattended_confirmed)
     elif mode == "custom-mcp":
-        mcp = config["github"]["custom_mcp"]
+        mcp = github["custom_mcp"]
+        previous_server = mcp.get("server_name")
         if mcp_server is not None:
             if not mcp_server:
                 raise RuntimeError("custom-mcp mode requires --mcp-server")
             mcp["server_name"] = mcp_server
         elif not mcp.get("server_name"):
             raise RuntimeError("custom-mcp mode requires --mcp-server")
-        if mode_changed:
+        backend_changed = mcp.get("server_name") != previous_server
+        if mode_changed or scope_changed or backend_changed:
             mcp["write_confirmed"] = False
             mcp["unattended_confirmed"] = False
         if write_confirmed is not None:
@@ -161,6 +179,7 @@ def configure_review(
 def configure_work_trigger(repo: Path, *, confirmed: bool) -> dict[str, Any]:
     config = load_config(repo)
     config["automation"]["work_trigger_confirmed"] = bool(confirmed)
+    config["automation"]["work_trigger_repositories"] = list(config["github"].get("repositories") or []) if confirmed else []
     save_config(repo, config)
     return config
 
