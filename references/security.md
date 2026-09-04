@@ -1,21 +1,15 @@
 # Security
 
-The `.ai/` directory is designed to be committed and may therefore be published or shared.
+Do not place credentials, tokens, `.env` data, private keys, or unnecessary private data in `.ai/` artifacts.
 
-Never store:
+`agent-bridge validate` performs a basic secret-pattern scan. It is a guardrail, not a replacement for repository secret scanning.
 
-- `.env` content
-- API keys or access tokens
-- passwords
-- private keys/certificates
-- browser cookies/session tokens
-- private session transcripts unless explicitly sanitized
-- credentials copied from CI logs
+## Writer least privilege
 
-Before committing, run:
+A writer should be scoped to selected repositories and branches and should not receive merge, secret-management, repository-delete, or admin privileges merely for convenience. The included MCP writer requires an explicit repository allowlist and enforces a write-branch prefix by default.
 
-```bash
-agent-bridge validate
-```
+## Local review execution
 
-The v1.0 scanner is intentionally conservative and cannot guarantee secret detection. Use repository-native secret scanning as an additional defense.
+Configured local tests execute code from an implementation PR. Run the watcher only on repositories/branches you trust and in an environment appropriate for code execution. The watcher rejects cross-repository PRs and untrusted branch prefixes by default, but these checks are not a sandbox.
+
+Final merge stays human-controlled by default.
