@@ -3,14 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-SENSITIVE_NAMES = {
-    ".env",
-    ".env.local",
-    ".env.production",
-    "id_rsa",
-    "id_ed25519",
-}
-
+SENSITIVE_NAMES = {".env", ".env.local", ".env.production", "id_rsa", "id_ed25519"}
 SECRET_PATTERNS = [
     ("private-key", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")),
     ("github-token", re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b")),
@@ -20,11 +13,7 @@ SECRET_PATTERNS = [
 
 
 def scan_text(text: str) -> list[str]:
-    findings: list[str] = []
-    for name, pattern in SECRET_PATTERNS:
-        if pattern.search(text):
-            findings.append(name)
-    return findings
+    return [name for name, pattern in SECRET_PATTERNS if pattern.search(text)]
 
 
 def validate_ai_tree(repo: Path) -> list[str]:
