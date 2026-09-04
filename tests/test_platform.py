@@ -4,7 +4,6 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 from github_agent_bridge.service import (
     ServiceError,
@@ -83,6 +82,7 @@ class ServiceCase(unittest.TestCase):
         text = definition.read_text(encoding="utf-8")
         self.assertIn("WorkingDirectory=", text)
         self.assertIn("-m github_agent_bridge.cli watch", text)
+        self.assertIn("StandardOutput=\"append:", text)
         self.assertTrue((Path(status["state_dir"]) / "service.json").exists())
         self.assertTrue(restart_service(
             self.repo, platform_name="linux", home=self.home, env={}, runner=runner, which=which_linux
@@ -93,16 +93,16 @@ class ServiceCase(unittest.TestCase):
 
     def test_launchd_install(self) -> None:
         runner = FakeRunner()
-        with patch("github_agent_bridge.service.os.getuid", return_value=501, create=True):
-            status = install_service(
-                self.repo,
-                platform_name="darwin",
-                home=self.home,
-                env={},
-                python_executable="/usr/bin/python3",
-                runner=runner,
-                which=which_mac,
-            )
+        status = install_service(
+            self.repo,
+            platform_name="darwin",
+            home=self.home,
+            env={},
+            python_executable="/usr/bin/python3",
+            uid=501,
+            runner=runner,
+            which=which_mac,
+        )
         self.assertTrue(status["installed"])
         self.assertTrue(status["active"])
         self.assertTrue(Path(status["definition"]).exists())
@@ -122,11 +122,30 @@ class ServiceCase(unittest.TestCase):
         )
         self.assertTrue(status["installed"])
         self.assertIsNone(status["active"])
+        self.assertNotIn("\\", status["label"])
         wrapper = Path(status["definition"]).read_text(encoding="utf-8")
         self.assertIn("cd /d", wrapper)
         self.assertIn("github_agent_bridge.cli watch", wrapper)
         self.assertTrue(any("/Create" in call for call in runner.calls))
         self.assertTrue(any("/RL" in call and "LIMITED" in call for call in runner.calls))
+
+    def test_service_validates_background_python(self) -> None:
+        class BadRunner(FakeRunner):
+            def __call__(self, cmd: list[str], cwd=None) -> subprocess.CompletedProcess[str]:
+                self.calls.append(list(cmd))
+                if "import github_agent_bridge" in cmd:
+                    return subprocess.CompletedProcess(cmd, 1, "", "missing")
+                return subprocess.CompletedProcess(cmd, 0, "ok", "")
+        with self.assertRaises(ServiceError):
+            install_service(
+                self.repo,
+                platform_name="linux",
+                home=self.home,
+                env={},
+                python_executable="/bad/python",
+                runner=BadRunner(),
+                which=which_linux,
+            )
 
 
 class SkillInstallCase(unittest.TestCase):
