@@ -209,12 +209,20 @@ def doctor_report(
         "rerun bootstrap with `--repository owner/name` (or let bootstrap infer origin)",
     ))
 
-    work_trigger_confirmed = bool(config["automation"].get("work_trigger_confirmed"))
+    trigger_confirmed = bool(config["automation"].get("work_trigger_confirmed"))
+    trigger_repositories = list(config["automation"].get("work_trigger_repositories") or [])
+    trigger_scoped = bool(trigger_confirmed and repository and repository in trigger_repositories)
+    if trigger_scoped:
+        trigger_message = f"ChatGPT Work GitHub event triggers are confirmed for {repository}"
+    elif trigger_confirmed:
+        trigger_message = f"Work triggers were confirmed for a different repository scope: {', '.join(trigger_repositories) or '(empty)'}"
+    else:
+        trigger_message = "ChatGPT Work GitHub event triggers have not been confirmed"
     checks.append(_check(
         "chatgpt_work_trigger",
-        "pass" if work_trigger_confirmed else "fail",
-        "ChatGPT Work GitHub event triggers are confirmed" if work_trigger_confirmed else "ChatGPT Work GitHub event triggers have not been confirmed",
-        "create the two one-time Work triggers on ChatGPT Web/iOS/Android, then run `agent-bridge setup work-trigger --confirm`",
+        "pass" if trigger_scoped else "fail",
+        trigger_message,
+        "create/verify the two Work triggers for this repository on ChatGPT Web/iOS/Android, then run `agent-bridge setup work-trigger --confirm`",
     ))
 
     test_commands = list(config["review"].get("test_commands") or [])
