@@ -36,6 +36,15 @@ from .watcher import process_once, watch
 from .writers import detect_writer, writer_contract
 
 
+def _add_writer_confirmation_flags(parser: argparse.ArgumentParser) -> None:
+    write_group = parser.add_mutually_exclusive_group()
+    write_group.add_argument("--confirm-write", action="store_true", help="Confirm that the configured connection exposes write actions")
+    write_group.add_argument("--clear-write", action="store_true", help="Revoke the stored write-capability confirmation")
+    unattended_group = parser.add_mutually_exclusive_group()
+    unattended_group.add_argument("--confirm-unattended", action="store_true", help="Confirm that workspace/app policy permits unattended writes")
+    unattended_group.add_argument("--clear-unattended", action="store_true", help="Revoke the stored unattended-write confirmation")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-bridge", description="GitHub-native ChatGPT development / Codex review automation")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -53,8 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap.add_argument("--mode", choices=["managed", "custom-mcp", "readonly"], help="Defaults to managed on first setup; preserves the current mode on repeated bootstrap")
     bootstrap.add_argument("--connection-name")
     bootstrap.add_argument("--mcp-server")
-    bootstrap.add_argument("--confirm-write", action="store_true")
-    bootstrap.add_argument("--confirm-unattended", action="store_true")
+    _add_writer_confirmation_flags(bootstrap)
     bootstrap.add_argument("--confirm-work-trigger", action="store_true", help="Record that the two ChatGPT Work GitHub event triggers were created")
     bootstrap.add_argument("--repository", action="append", dest="repositories", help="Allowed owner/name repository; defaults to/merges the GitHub origin when detectable")
     bootstrap.add_argument("--test-command", action="append", dest="test_commands", help="Trusted local test command; repeat for multiple commands")
@@ -68,8 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
     writer.add_argument("--mode", required=True, choices=["managed", "custom-mcp", "readonly"])
     writer.add_argument("--connection-name")
     writer.add_argument("--mcp-server")
-    writer.add_argument("--confirm-write", action="store_true", help="Confirm that the configured connection actually exposes write actions")
-    writer.add_argument("--confirm-unattended", action="store_true", help="Confirm that the current ChatGPT/workspace policy permits those writes without a human confirmation step")
+    _add_writer_confirmation_flags(writer)
     writer.add_argument("--repository", action="append", dest="repositories", help="Allowed owner/name repository; repeat to add more")
 
     review_setup = setup_sub.add_parser("review", help="Configure local Codex validation")
@@ -82,7 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     work_trigger = setup_sub.add_parser("work-trigger", help="Record one-time ChatGPT Work GitHub trigger setup")
     work_trigger_state = work_trigger.add_mutually_exclusive_group(required=True)
-    work_trigger_state.add_argument("--confirm", action="store_true", help="Confirm the two event-triggered Work tasks exist")
+    work_trigger_state.add_argument("--confirm", action="store_true", help="Confirm the two event-triggered Work tasks exist for the configured repository scope")
     work_trigger_state.add_argument("--clear", action="store_true", help="Mark Work trigger setup as incomplete")
 
     task = sub.add_parser("task", help="Task operations")
@@ -170,8 +177,12 @@ def _test_policy(args: argparse.Namespace) -> Optional[bool]:
     return None
 
 
-def _optional_confirmation(value: bool) -> Optional[bool]:
-    return True if value else None
+def _tri_state(confirm: bool, clear: bool) -> Optional[bool]:
+    if confirm:
+        return True
+    if clear:
+        return False
+    return None
 
 
 def cmd_status(repo: Path) -> int:
@@ -230,14 +241,14 @@ def main(argv: Optional[list[str]] = None) -> int:
                 mode=mode,
                 connection_name=args.connection_name,
                 mcp_server=args.mcp_server,
-                write_confirmed=_optional_confirmation(args.confirm_write),
-                unattended_confirmed=_optional_confirmation(args.confirm_unattended),
+                write_confirmed=_tri_state(args.confirm_write, args.clear_write),
+                unattended_confirmed=_tri_state(args.confirm_unattended, args.clear_unattended),
                 repositories=repositories,
                 test_commands=args.test_commands,
                 codex_command=args.codex_command,
                 timeout_seconds=args.timeout,
                 require_tests_for_approval=_test_policy(args),
-                work_trigger_confirmed=_optional_confirmation(args.confirm_work_trigger),
+                work_trigger_confirmed=True if args.confirm_work_trigger else None,
             )
             report = doctor_report(repo)
             print(json.dumps({"github": config["github"], "review": config["review"], "automation": config["automation"]}, ensure_ascii=False, indent=2))
@@ -252,8 +263,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                 mode=args.mode,
                 connection_name=args.connection_name,
                 mcp_server=args.mcp_server,
-                write_confirmed=_optional_confirmation(args.confirm_write),
-                unattended_confirmed=_optional_confirmation(args.confirm_unattended),
+                write_confirmed=_tri_state(args.confirm_write, args.clear_write),
+                unattended_confirmed=_tri_state(args.confirm_unattended, args.clear_unattended),
                 repositories=args.repositories,
             )
             print(json.dumps(config["github"], ensure_ascii=False, indent=2))
@@ -270,7 +281,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             return 0
         if args.command == "setup" and args.setup_command == "work-trigger":
             config = configure_work_trigger(repo, confirmed=bool(args.confirm and not args.clear))
-            print(json.dumps({"work_trigger_confirmed": config["automation"]["work_trigger_confirmed"]}, indent=2))
+            print(json.dumps({
+                "work_trigger_confirmed": config["automation"]["work_trigger_confirmed"],
+                "repositories": config["automation"].get("work_trigger_repositories", []),
+            }, indent=2))
             return 0
         if args.command == "task":
             if args.task_command == "create":
