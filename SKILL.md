@@ -1,6 +1,6 @@
 ---
 name: github-agent-bridge
-description: Automate GitHub-mediated software development where Codex performs local requirement analysis and real-environment review, ChatGPT Web/Work performs architecture, primary implementation, tests, and first self-review, and GitHub provides durable context/events. Use when the user wants Codex and ChatGPT to collaborate with minimal manual prompt copying, needs tasks pinned to exact commits, wants ChatGPT to write implementation PRs through a managed/MCP writer, or wants Codex to automatically review each new PR head and run local tests.
+description: Automate GitHub-mediated development where Codex locally analyzes and dispatches, ChatGPT Web/Work designs and implements, and Codex reviews each implementation PR with real tests. Use for automated ChatGPT/Codex handoff, Task PR dispatch, exact-SHA review loops, zero-touch setup, or cross-platform Codex App/CLI watcher service management.
 ---
 
 # GitHub Agent Bridge
@@ -13,6 +13,22 @@ Treat this role split as the default architecture:
 - **Human** = final merge/acceptance.
 
 Do not silently invert these roles. Codex should not become the primary implementer unless ChatGPT write capability is unavailable or the user explicitly asks for a local fallback.
+
+## Codex App / CLI portability
+
+This Skill is intended to behave the same from Codex App, Codex CLI, and Codex IDE clients.
+
+Prefer a user installation so every local Codex surface can discover the same Skill:
+
+`agent-bridge skill install --scope user`
+
+The installer writes real files to `$HOME/.agents/skills/github-agent-bridge`, the Codex USER Skill root. Restart Codex if a newly installed Skill is not visible immediately.
+
+For repository-only distribution, use:
+
+`agent-bridge skill install --scope repo`
+
+Read `references/cross-platform.md` for OS-specific service behavior.
 
 ## On a new development request in Codex
 
@@ -55,7 +71,11 @@ Writer confirmations are scoped safety attestations. If the writer backend or re
 
 ## Codex local review policy
 
-Prefer the long-running `agent-bridge watch` process. It watches only marked Implementation PRs.
+Prefer the persistent watcher installed by:
+
+`agent-bridge service install`
+
+The automatic backend is a systemd user service on Linux, a LaunchAgent on macOS, and a per-user Task Scheduler task on Windows. If service installation is unavailable, `agent-bridge watch` remains the manual fallback.
 
 For each new eligible PR head SHA:
 
@@ -92,9 +112,13 @@ After both are created, run:
 
 `agent-bridge setup work-trigger --confirm`
 
-Then start the persistent local reviewer:
+Then install/start the persistent reviewer:
 
-`agent-bridge watch`
+`agent-bridge service install`
+
+Check it with:
+
+`agent-bridge service status`
 
 Once the watcher has emitted a fresh heartbeat, require:
 
@@ -109,12 +133,14 @@ Do not trigger ChatGPT on every implementation commit update; Codex watcher alre
 - Run `agent-bridge validate` before publishing `.ai` artifacts.
 - Do not place tokens, `.env`, credentials, private keys, or secrets in `.ai/`.
 - `agent-bridge setup review --test-command ...` commands are trusted local commands. PR code can execute through tests; use an appropriate local/container/VM environment.
+- Service installers use per-user OS facilities and should not require repository-admin, secrets, delete, or machine-admin permissions.
 - Keep final merge human-controlled by default.
 - Do not set `--confirm-write`, `--confirm-unattended`, or Work-trigger confirmation unless the actual platform behavior has been verified for the current repository scope.
 
 ## References
 
 - `references/bootstrap.md` — one-shot setup and runtime zero-touch readiness checks.
+- `references/cross-platform.md` — Codex App/CLI Skill discovery and OS service backends.
 - `references/automation.md` — end-to-end event loop.
 - `references/writer-modes.md` — managed/MCP/readonly choices and permissions.
 - `references/protocol.md` — durable task/handoff state contract.
