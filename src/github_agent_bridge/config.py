@@ -80,13 +80,14 @@ def configure_writer(
     mode: str,
     connection_name: Optional[str] = None,
     mcp_server: Optional[str] = None,
-    write_confirmed: bool = False,
-    unattended_confirmed: bool = False,
+    write_confirmed: Optional[bool] = None,
+    unattended_confirmed: Optional[bool] = None,
     repositories: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     if mode not in {"managed", "custom-mcp", "readonly"}:
         raise RuntimeError("writer mode must be managed, custom-mcp, or readonly")
     config = load_config(repo)
+    previous_mode = config["github"]["mode"]
     config["github"]["mode"] = mode
     if repositories is not None:
         normalized = []
@@ -97,16 +98,36 @@ def configure_writer(
             if value not in normalized:
                 normalized.append(value)
         config["github"]["repositories"] = normalized
+
+    mode_changed = mode != previous_mode
     if mode == "managed":
-        config["github"]["managed"]["connection_name"] = connection_name or "github-agent-bridge-writer"
-        config["github"]["managed"]["write_confirmed"] = bool(write_confirmed)
-        config["github"]["managed"]["unattended_confirmed"] = bool(unattended_confirmed)
+        managed = config["github"]["managed"]
+        if connection_name is not None:
+            managed["connection_name"] = connection_name or "github-agent-bridge-writer"
+        elif not managed.get("connection_name"):
+            managed["connection_name"] = "github-agent-bridge-writer"
+        if mode_changed:
+            managed["write_confirmed"] = False
+            managed["unattended_confirmed"] = False
+        if write_confirmed is not None:
+            managed["write_confirmed"] = bool(write_confirmed)
+        if unattended_confirmed is not None:
+            managed["unattended_confirmed"] = bool(unattended_confirmed)
     elif mode == "custom-mcp":
-        if not mcp_server:
+        mcp = config["github"]["custom_mcp"]
+        if mcp_server is not None:
+            if not mcp_server:
+                raise RuntimeError("custom-mcp mode requires --mcp-server")
+            mcp["server_name"] = mcp_server
+        elif not mcp.get("server_name"):
             raise RuntimeError("custom-mcp mode requires --mcp-server")
-        config["github"]["custom_mcp"]["server_name"] = mcp_server
-        config["github"]["custom_mcp"]["write_confirmed"] = bool(write_confirmed)
-        config["github"]["custom_mcp"]["unattended_confirmed"] = bool(unattended_confirmed)
+        if mode_changed:
+            mcp["write_confirmed"] = False
+            mcp["unattended_confirmed"] = False
+        if write_confirmed is not None:
+            mcp["write_confirmed"] = bool(write_confirmed)
+        if unattended_confirmed is not None:
+            mcp["unattended_confirmed"] = bool(unattended_confirmed)
     save_config(repo, config)
     return config
 
@@ -151,13 +172,13 @@ def bootstrap_config(
     repositories: Optional[list[str]] = None,
     connection_name: Optional[str] = None,
     mcp_server: Optional[str] = None,
-    write_confirmed: bool = False,
-    unattended_confirmed: bool = False,
+    write_confirmed: Optional[bool] = None,
+    unattended_confirmed: Optional[bool] = None,
     test_commands: Optional[list[str]] = None,
     codex_command: Optional[str] = None,
     timeout_seconds: Optional[int] = None,
     require_tests_for_approval: Optional[bool] = None,
-    work_trigger_confirmed: bool = False,
+    work_trigger_confirmed: Optional[bool] = None,
 ) -> dict[str, Any]:
     configure_writer(
         repo,
@@ -175,5 +196,6 @@ def bootstrap_config(
         timeout_seconds=timeout_seconds,
         require_tests_for_approval=require_tests_for_approval,
     )
-    configure_work_trigger(repo, confirmed=work_trigger_confirmed)
+    if work_trigger_confirmed is not None:
+        configure_work_trigger(repo, confirmed=work_trigger_confirmed)
     return load_config(repo)
