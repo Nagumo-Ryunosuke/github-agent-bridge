@@ -122,17 +122,27 @@ Role policy: dispatcher={config['workflow']['dispatcher']}, developer={config['w
 
 def build_work_automation_setup(repo: Path) -> str:
     config = load_config(repo)
-    return f"""Create two GitHub event-triggered tasks in ChatGPT Work for this repository.
+    repositories = ", ".join(config["github"].get("repositories") or []) or "the connected repository"
+    return f"""ONE-TIME CHATGPT WORK SETUP
+
+Create these event-triggered tasks in ChatGPT Work on Web, iOS, or Android. The desktop app can display existing tasks but currently cannot create/edit their trigger conditions.
+
+Authorized repository scope: {repositories}
 
 1. IMPLEMENT TASK
-Trigger: pull request opened or marked ready for review.
+Trigger: GitHub pull request opened or marked ready for review.
 Condition: PR body contains `agent-bridge:task`.
 Prompt: Identify the TASK id from the PR body, read `.ai/tasks/<TASK>.md` and repository context, then follow the `agent-bridge trigger work-prompt <TASK> --phase implement` policy. Use the configured GitHub writer. Never merge the implementation PR.
 
 2. FIX AFTER CODEX REVIEW
-Trigger: new pull request comment.
+Trigger: new GitHub pull request comment.
 Condition: comment contains `agent-bridge:codex-review` and `verdict=REVISE`.
 Prompt: Identify the TASK id and reviewed head from the machine marker, read the latest Codex findings and current implementation PR, then follow the fix policy. Address justified findings, self-review, and push a new commit. Never merge.
+
+After both tasks are saved and authorized, run:
+
+    agent-bridge setup work-trigger --confirm
+    agent-bridge doctor
 
 Configured writer mode: {config['github']['mode']}.
 """
