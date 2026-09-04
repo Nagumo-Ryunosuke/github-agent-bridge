@@ -255,7 +255,7 @@ def install_service(
             if proc.returncode != 0:
                 raise ServiceError(proc.stderr.strip() or "failed to start launchd agent")
     elif backend == "windows-task":
-        paths.definition.write_text(_windows_wrapper(repo, python_executable, paths.state_dir), encoding="utf-8", newline="")
+        paths.definition.write_bytes(_windows_wrapper(repo, python_executable, paths.state_dir).encode("utf-8"))
         tool = which("schtasks") or which("schtasks.exe") or "schtasks.exe"
         proc = runner([
             tool, "/Create", "/TN", paths.label, "/TR", str(paths.definition),
