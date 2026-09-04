@@ -32,6 +32,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "automation": {
         "work_trigger": "github-pr",
+        "work_trigger_confirmed": False,
         "watch_interval_seconds": 30,
         "implementation_marker": "agent-bridge:implementation",
         "implementation_branch_prefix": "ai/",
@@ -88,7 +89,14 @@ def configure_writer(
     config = load_config(repo)
     config["github"]["mode"] = mode
     if repositories is not None:
-        config["github"]["repositories"] = repositories
+        normalized = []
+        for repository in repositories:
+            value = repository.strip()
+            if not value or value.count("/") != 1:
+                raise RuntimeError(f"repository must be owner/name: {repository}")
+            if value not in normalized:
+                normalized.append(value)
+        config["github"]["repositories"] = normalized
     if mode == "managed":
         config["github"]["managed"]["connection_name"] = connection_name or "github-agent-bridge-writer"
         config["github"]["managed"]["write_confirmed"] = bool(write_confirmed)
@@ -114,9 +122,11 @@ def configure_review(
     config = load_config(repo)
     review = config["review"]
     if test_commands is not None:
-        review["test_commands"] = test_commands
+        review["test_commands"] = [command.strip() for command in test_commands if command.strip()]
     if codex_command is not None:
-        review["codex_command"] = codex_command
+        if not codex_command.strip():
+            raise RuntimeError("codex command must not be empty")
+        review["codex_command"] = codex_command.strip()
     if timeout_seconds is not None:
         if timeout_seconds < 1:
             raise RuntimeError("review timeout must be positive")
@@ -125,3 +135,45 @@ def configure_review(
         review["require_tests_for_approval"] = bool(require_tests_for_approval)
     save_config(repo, config)
     return config
+
+
+def configure_work_trigger(repo: Path, *, confirmed: bool) -> dict[str, Any]:
+    config = load_config(repo)
+    config["automation"]["work_trigger_confirmed"] = bool(confirmed)
+    save_config(repo, config)
+    return config
+
+
+def bootstrap_config(
+    repo: Path,
+    *,
+    mode: str,
+    repositories: Optional[list[str]] = None,
+    connection_name: Optional[str] = None,
+    mcp_server: Optional[str] = None,
+    write_confirmed: bool = False,
+    unattended_confirmed: bool = False,
+    test_commands: Optional[list[str]] = None,
+    codex_command: Optional[str] = None,
+    timeout_seconds: Optional[int] = None,
+    require_tests_for_approval: Optional[bool] = None,
+    work_trigger_confirmed: bool = False,
+) -> dict[str, Any]:
+    configure_writer(
+        repo,
+        mode=mode,
+        connection_name=connection_name,
+        mcp_server=mcp_server,
+        write_confirmed=write_confirmed,
+        unattended_confirmed=unattended_confirmed,
+        repositories=repositories,
+    )
+    configure_review(
+        repo,
+        test_commands=test_commands,
+        codex_command=codex_command,
+        timeout_seconds=timeout_seconds,
+        require_tests_for_approval=require_tests_for_approval,
+    )
+    configure_work_trigger(repo, confirmed=work_trigger_confirmed)
+    return load_config(repo)
