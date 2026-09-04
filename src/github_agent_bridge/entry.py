@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from .cli import build_parser as legacy_build_parser
 from .cli import main as legacy_main
 from .git import GitError, repo_root
 from .service import ServiceError, install_service, restart_service, service_status, uninstall_service
@@ -14,6 +15,20 @@ from .skill_install import SkillInstallError, install_skill, skill_status, unins
 
 def _repo() -> Path:
     return repo_root(Path.cwd())
+
+
+def _root_help() -> str:
+    legacy = legacy_build_parser().format_help().rstrip()
+    return (
+        legacy
+        + "\n\nCross-platform Codex commands:\n"
+        + "  skill     Install/status/uninstall the Skill for Codex App, CLI and IDE\n"
+        + "  service   Install/status/restart/uninstall the persistent local reviewer\n\n"
+        + "Examples:\n"
+        + "  agent-bridge skill install --scope user\n"
+        + "  agent-bridge service install\n"
+        + "  agent-bridge doctor\n"
+    )
 
 
 def _service_parser() -> argparse.ArgumentParser:
@@ -45,7 +60,7 @@ def _skill_parser() -> argparse.ArgumentParser:
 
     install = sub.add_parser("install", help="Install/update the bundled Skill using real files")
     install.add_argument("--scope", choices=["user", "repo"], default="user")
-    install.add_argument("--force", action="store_true")
+    install.add_argument("--force", action="store_true", help="Replace an unmanaged or locally modified destination intentionally")
     install.add_argument("--json", action="store_true", dest="json_output")
 
     status = sub.add_parser("status", help="Show installed Skill state")
@@ -54,6 +69,7 @@ def _skill_parser() -> argparse.ArgumentParser:
 
     uninstall = sub.add_parser("uninstall", help="Remove the installed Skill copy")
     uninstall.add_argument("--scope", choices=["user", "repo"], default="user")
+    uninstall.add_argument("--force", action="store_true", help="Delete an unmanaged or locally modified destination intentionally")
     uninstall.add_argument("--json", action="store_true", dest="json_output")
     return parser
 
@@ -62,7 +78,10 @@ def _print_result(result: dict, *, json_output: bool) -> None:
     if json_output:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return
-    for key in ("backend", "scope", "installed", "active", "up_to_date", "detail", "path", "definition", "state_dir"):
+    for key in (
+        "backend", "scope", "installed", "managed", "modified", "active", "up_to_date",
+        "detail", "path", "definition", "state_dir",
+    ):
         if key in result:
             print(f"{key}: {result[key]}")
 
@@ -94,7 +113,7 @@ def _skill_main(argv: list[str]) -> int:
     elif args.action == "status":
         result = skill_status(scope=args.scope, repo=repo)
     else:
-        result = uninstall_skill(scope=args.scope, repo=repo)
+        result = uninstall_skill(scope=args.scope, repo=repo, force=args.force)
     _print_result(result, json_output=args.json_output)
     if args.action == "uninstall":
         return 0
@@ -104,9 +123,12 @@ def _skill_main(argv: list[str]) -> int:
 def main(argv: Optional[list[str]] = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     try:
-        if args and args[0] == "service":
+        if not args or args in (["--help"], ["-h"]):
+            print(_root_help())
+            return 0
+        if args[0] == "service":
             return _service_main(args[1:])
-        if args and args[0] == "skill":
+        if args[0] == "skill":
             return _skill_main(args[1:])
         return legacy_main(args)
     except (RuntimeError, GitError, ServiceError, SkillInstallError, ValueError) as exc:
