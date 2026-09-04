@@ -1,71 +1,28 @@
-# Protocol v1
+# Protocol
 
-## Goal
+GitHub/Git are the durable source of truth. Chat history is advisory.
 
-Allow independent agents such as ChatGPT Web and Codex to collaborate through durable repository state without shared chat history.
+## Roles
 
-## Source of truth
+- dispatcher: Codex
+- developer: ChatGPT
+- reviewer: Codex
+- merger: human by default
 
-Priority order:
+## Task identity
 
-1. Git commit / branch / PR / CI facts
-2. `.ai/state/tasks.json`
-3. Task, handoff, review, ADR artifacts
-4. Agent chat history
+Each Task is pinned to `base.branch` and exact `base.commit`. The implementation PR head SHA is the live implementation identity for each review iteration.
 
-## Task lifecycle
+## States
 
-```text
-draft -> ready -> claimed -> in_progress -> review_required -> reviewing
-                                   ^             |              |
-                                   |             |              +-> changes_requested -> in_progress
-                                   |             +-----------------> approved -> done
-                                   +-> blocked -> in_progress
+`draft -> ready -> claimed -> in_progress -> review_required -> reviewing -> approved -> done`
 
-Any active task may become stale when its pinned context is no longer safe.
-```
+Alternate transitions include `blocked`, `changes_requested`, and `stale`. A Codex `REVISE` result routes the next action back to ChatGPT and clears first-pass self-review state for the next implementation iteration.
 
-## Task contract
+## Machine markers
 
-A task must identify:
+- Task PR: `<!-- agent-bridge:task task=TASK-XXXXXX -->`
+- Implementation PR: `<!-- agent-bridge:implementation task=TASK-XXXXXX -->`
+- Codex review comment: `<!-- agent-bridge:codex-review task=TASK-XXXXXX verdict=REVISE head=<sha> -->`
 
-- `task_id`
-- title/objective
-- requested/assigned agent
-- status
-- priority
-- base branch and exact base commit
-- target branch when known
-- acceptance criteria
-
-The Markdown task is for humans/agents. `.ai/state/tasks.json` is the machine-readable index.
-
-## Implementation handoff
-
-A handoff must identify:
-
-- task id
-- agent
-- base commit
-- implementation commit
-- implementation branch
-- PR when available
-- summary
-- validation evidence
-- remaining risks/questions
-
-## Review contract
-
-A review must identify:
-
-- task id
-- reviewer
-- exact reviewed commit
-- result (`approve` or `request-changes`)
-- findings and required changes
-
-A reviewer must not approve a commit different from the implementation commit currently recorded in state.
-
-## GitHub-native evolution
-
-v1.0 stores the protocol in Git-tracked files. Later versions may mirror state into GitHub Issues, PR labels, Checks, and Actions, but repository files remain portable across hosting providers.
+Machine markers are routing metadata; exact Git SHAs remain authoritative.
