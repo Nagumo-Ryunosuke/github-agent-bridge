@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.5.0 - 2026-09-06
+
+Added cross-platform self-bootstrap so a user can install and use the Skill with one command and only a small number of security-sensitive confirmations.
+
+- Added `agent-bridge env status` and `agent-bridge env install` for machine prerequisite discovery, installation planning, GitHub authentication checks and Codex authentication checks.
+- Added Windows `scripts/bootstrap.ps1` and Linux/macOS `scripts/bootstrap.sh` clone-free installers.
+- Bootstrap creates a private per-user Python environment, installs/updates the bridge, installs the shared Skill, installs missing Git/GitHub CLI/Codex CLI dependencies, and starts required login flows.
+- Kept GitHub authorization, ChatGPT/Codex login, OS elevation and explicit write/unattended-write attestations as user-controlled security boundaries.
+- Updated the Skill contract so Codex consolidates non-sensitive installation changes into one approval instead of asking for each dependency separately.
+- Made the same user Skill work across Codex Desktop/App, Codex CLI and IDE clients through `$HOME/.agents/skills/github-agent-bridge`.
+- Clarified that Codex Desktop can be the primary interface, while Codex CLI remains required by the persistent unattended reviewer because it invokes `codex exec --ephemeral`.
+- Added platform/package-manager detection for Windows, Linux and macOS and documented upstream OS/CPU availability as the only hard portability boundary.
+- Added Codex login status as a critical `agent-bridge doctor` readiness check.
+- Moved one-command bootstrap and autonomous first-use behavior to the top of the README.
+
 ## 1.4.0 - 2026-09-04
 
 Made the Codex side portable across App/CLI/IDE surfaces and added cross-platform persistent watcher service management.
