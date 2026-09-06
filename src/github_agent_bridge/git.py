@@ -14,6 +14,7 @@ def run_git(repo: Path, *args: str, check: bool = True) -> str:
         ["git", *args],
         cwd=repo,
         text=True,
+        encoding="utf-8",
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
