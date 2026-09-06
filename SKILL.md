@@ -22,7 +22,7 @@ When this Skill is invoked:
 
 1. Try `agent-bridge env status` first.
 2. If `agent-bridge` is not installed, detect the operating system and offer **one consolidated installation confirmation**. After approval, run the appropriate one-command bootstrap:
-   - Linux/macOS: `curl -fsSL https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.sh | bash`
+   - Linux/macOS: `curl -fsSL https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.sh | sh`
    - Windows PowerShell: `irm https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.ps1 | iex`
 3. If `agent-bridge` exists but local dependencies are incomplete, show the installation plan produced by `agent-bridge env install`, ask once, then run `agent-bridge env install --yes` after approval.
 4. Do not ask separately for every package. Consolidate non-sensitive machine changes into one approval whenever possible.
