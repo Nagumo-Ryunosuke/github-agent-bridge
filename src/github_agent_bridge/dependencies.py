@@ -50,8 +50,10 @@ def detect_environment(
     which: Which = shutil.which,
     runner: Runner = _run,
     platform_name: Optional[str] = None,
+    machine: Optional[str] = None,
 ) -> dict[str, Any]:
     system = platform_name or platform.system()
+    architecture = machine or platform.machine() or "unknown"
     git_path = which("git")
     gh_path = which("gh")
     codex_path = which("codex") if include_codex else None
@@ -71,6 +73,7 @@ def detect_environment(
 
     return {
         "platform": system,
+        "architecture": architecture,
         "python": {
             "available": sys.version_info >= (3, 9),
             "path": sys.executable,
@@ -99,6 +102,8 @@ def _sudo_prefix() -> list[str]:
     geteuid = getattr(os, "geteuid", None)
     if callable(geteuid) and geteuid() == 0:
         return []
+    if not shutil.which("sudo"):
+        raise DependencyInstallError("system packages are missing and `sudo` was not found; install them as root or rerun as root")
     return ["sudo"]
 
 
@@ -120,6 +125,15 @@ def _linux_package_names(manager: str, *, need_git: bool, need_gh: bool, need_cu
     return packages
 
 
+def _powershell(which: Which) -> Optional[str]:
+    return which("powershell") or which("powershell.exe") or which("pwsh")
+
+
+def _default_brew_path(architecture: str) -> str:
+    normalized = architecture.lower()
+    return "/opt/homebrew/bin/brew" if normalized in {"arm64", "aarch64"} else "/usr/local/bin/brew"
+
+
 def build_install_plan(
     status: dict[str, Any],
     *,
@@ -127,6 +141,7 @@ def build_install_plan(
     which: Which = shutil.which,
 ) -> list[InstallStep]:
     system = str(status.get("platform") or platform.system())
+    architecture = str(status.get("architecture") or platform.machine() or "unknown")
     need_git = not bool(status.get("git", {}).get("available"))
     need_gh = not bool(status.get("gh", {}).get("available"))
     need_codex = include_codex and not bool(status.get("codex", {}).get("available"))
@@ -138,7 +153,7 @@ def build_install_plan(
             if not winget:
                 raise DependencyInstallError(
                     "WinGet (`winget`) is required to install missing Git/GitHub CLI automatically. "
-                    "Install App Installer/WinGet, then rerun `agent-bridge env install`."
+                    "Install Microsoft App Installer/WinGet, then rerun `agent-bridge env install`."
                 )
             common = ("--accept-source-agreements", "--accept-package-agreements", "--silent")
             if need_git:
@@ -146,10 +161,10 @@ def build_install_plan(
             if need_gh:
                 steps.append(InstallStep("gh", "Install GitHub CLI with WinGet", (winget, "install", "--id", "GitHub.cli", "-e", *common)))
         if need_codex:
-            powershell = which("powershell") or which("powershell.exe") or which("pwsh")
+            powershell = _powershell(which)
             if not powershell:
-                raise DependencyInstallError("PowerShell is required to install Codex CLI automatically on Windows")
-            script = "$env:CODEX_NON_INTERACTIVE='1'; irm https://chatgpt.com/codex/install.ps1 | iex"
+                raise DependencyInstallError("PowerShell is required to run the official Codex CLI installer on Windows")
+            script = "irm https://chatgpt.com/codex/install.ps1 | iex"
             steps.append(InstallStep("codex", "Install Codex CLI with the official OpenAI installer", (powershell, "-NoProfile", "-ExecutionPolicy", "ByPass", "-Command", script)))
         return steps
 
@@ -160,7 +175,7 @@ def build_install_plan(
             if not manager:
                 raise DependencyInstallError(
                     "No supported Linux package manager was found (apt-get/dnf/yum/zypper/pacman/apk). "
-                    "Install Git, GitHub CLI and curl manually, then rerun `agent-bridge env install`."
+                    "Install Git, GitHub CLI and curl with the distribution package manager, then rerun `agent-bridge env install`."
                 )
             packages = _linux_package_names(manager, need_git=need_git, need_gh=need_gh, need_curl=need_curl)
             prefix = _sudo_prefix()
@@ -180,28 +195,41 @@ def build_install_plan(
             sh = which("sh") or "/bin/sh"
             steps.append(InstallStep(
                 "codex",
-                "Install Codex CLI with the official OpenAI installer",
-                (sh, "-c", "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh"),
+                "Install Codex CLI with the official OpenAI architecture-aware installer",
+                (sh, "-c", "curl -fsSL https://chatgpt.com/codex/install.sh | sh"),
             ))
         return steps
 
     if system == "Darwin":
         brew = which("brew")
-        if (need_git or need_gh or need_codex) and not brew:
-            raise DependencyInstallError("Homebrew is required for automatic dependency installation on macOS")
+        if (need_git or need_gh) and not brew:
+            shell = which("/bin/bash") or "/bin/bash"
+            brew_install = '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+            steps.append(InstallStep("homebrew", "Install Homebrew for missing macOS packages", (shell, "-c", brew_install)))
+            brew = _default_brew_path(architecture)
         packages: list[str] = []
         if need_git:
             packages.append("git")
         if need_gh:
             packages.append("gh")
         if packages:
-            steps.append(InstallStep("packages", "Install Git/GitHub CLI with Homebrew", (brew, "install", *packages)))  # type: ignore[arg-type]
+            if not brew:
+                raise DependencyInstallError("Homebrew could not be resolved for automatic Git/GitHub CLI installation")
+            steps.append(InstallStep("packages", "Install Git/GitHub CLI with Homebrew", (brew, "install", *packages)))
         if need_codex:
-            steps.append(InstallStep("codex", "Install Codex CLI with Homebrew", (brew, "install", "--cask", "codex")))  # type: ignore[arg-type]
+            sh = which("sh") or "/bin/sh"
+            steps.append(InstallStep(
+                "codex",
+                "Install Codex CLI with the official OpenAI architecture-aware installer",
+                (sh, "-c", "curl -fsSL https://chatgpt.com/codex/install.sh | sh"),
+            ))
         return steps
 
     if need_git or need_gh or need_codex:
-        raise DependencyInstallError(f"automatic dependency installation is not supported on {system}")
+        raise DependencyInstallError(
+            f"automatic dependency installation is not supported on OS={system} architecture={architecture}; "
+            "the Skill remains portable, but full zero-touch review also requires upstream GitHub CLI and Codex CLI builds for this platform"
+        )
     return steps
 
 
@@ -225,7 +253,10 @@ def apply_install_plan(steps: list[InstallStep], *, runner: Runner = _run) -> No
     for step in steps:
         proc = runner(list(step.command), False)
         if proc.returncode != 0:
-            raise DependencyInstallError(f"dependency step `{step.name}` failed with exit code {proc.returncode}")
+            raise DependencyInstallError(
+                f"dependency step `{step.name}` failed with exit code {proc.returncode}; "
+                "no readiness flag was written, so rerunning the installer is safe"
+            )
     _refresh_windows_path()
 
 
@@ -256,7 +287,7 @@ def format_environment_status(status: dict[str, Any]) -> str:
     def mark(value: bool) -> str:
         return "YES" if value else "NO"
 
-    lines = [f"Platform: {status['platform']}"]
+    lines = [f"Platform: {status['platform']} ({status.get('architecture', 'unknown')})"]
     lines.append(f"Python >=3.9: {mark(bool(status['python']['available']))} ({status['python']['version']})")
     lines.append(f"Git: {mark(bool(status['git']['available']))}")
     lines.append(f"GitHub CLI: {mark(bool(status['gh']['available']))}; authenticated={mark(bool(status['gh']['authenticated']))}")
@@ -270,7 +301,10 @@ def format_environment_status(status: dict[str, Any]) -> str:
 
 
 def format_install_plan(steps: list[InstallStep], status: dict[str, Any], *, include_codex: bool = True) -> str:
-    lines = ["Planned machine changes:"]
+    lines = [
+        f"Detected: {status.get('platform', 'unknown')} / {status.get('architecture', 'unknown')}",
+        "Planned machine changes:",
+    ]
     if steps:
         for step in steps:
             lines.append(f"  - {step.description}")
@@ -279,5 +313,5 @@ def format_install_plan(steps: list[InstallStep], status: dict[str, Any], *, inc
     if not status["gh"].get("authenticated"):
         lines.append("  - start interactive `gh auth login` for github.com")
     if include_codex and not status["codex"].get("authenticated"):
-        lines.append("  - start interactive `codex login` (ChatGPT sign-in)")
+        lines.append("  - start interactive `codex login` using the user's ChatGPT account")
     return "\n".join(lines)
