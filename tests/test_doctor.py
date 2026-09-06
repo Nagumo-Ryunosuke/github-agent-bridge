@@ -42,6 +42,8 @@ class DoctorCase(unittest.TestCase):
             return subprocess.CompletedProcess(cmd, 0, ".git/agent-bridge/watcher.json\n", "")
         if "auth" in cmd:
             return subprocess.CompletedProcess(cmd, 0, "authenticated\n", "")
+        if len(cmd) >= 3 and cmd[1:3] == ["login", "status"]:
+            return subprocess.CompletedProcess(cmd, 0, "Logged in using ChatGPT\n", "")
         if len(cmd) >= 3 and cmd[1:3] == ["repo", "view"]:
             return subprocess.CompletedProcess(cmd, 0, '{"nameWithOwner":"owner/repo"}\n', "")
         if "--version" in cmd:
@@ -84,6 +86,19 @@ class DoctorCase(unittest.TestCase):
         report = self.report()
         self.assertTrue(report["zero_touch_ready"])
         self.assertTrue(all(item["status"] != "fail" for item in report["checks"]))
+
+    def test_codex_authentication_is_required(self) -> None:
+        self.ready_config()
+
+        def runner(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+            if len(cmd) >= 3 and cmd[1:3] == ["login", "status"]:
+                return subprocess.CompletedProcess(cmd, 1, "", "Not logged in")
+            return self.fake_runner(cmd, cwd)
+
+        report = doctor_report(self.repo, runner=runner, which=self.fake_which, now=NOW)
+        auth = next(item for item in report["checks"] if item["name"] == "codex_auth")
+        self.assertEqual("fail", auth["status"])
+        self.assertFalse(report["zero_touch_ready"])
 
     def test_missing_work_trigger_blocks_zero_touch(self) -> None:
         self.ready_config(work_trigger_confirmed=False)
