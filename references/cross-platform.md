@@ -15,8 +15,10 @@ irm https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/
 ### Linux / macOS
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.sh | sh
 ```
+
+The Unix installer is POSIX-sh compatible and does not require Bash.
 
 The bootstrap displays one consolidated machine-change confirmation, creates a private user virtual environment, installs/updates the bridge and shared Skill, detects missing local tooling, installs supported dependencies, then starts missing GitHub/Codex login flows.
 
