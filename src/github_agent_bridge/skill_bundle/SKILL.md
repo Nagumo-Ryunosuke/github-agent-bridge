@@ -20,7 +20,7 @@ When the Skill is invoked, do not make the user manually install each dependency
 
 1. Try `agent-bridge env status` first.
 2. If `agent-bridge` itself is unavailable, detect the local OS and offer **one consolidated installation confirmation**:
-   - Linux/macOS: `curl -fsSL https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.sh | bash`
+   - Linux/macOS: `curl -fsSL https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.sh | sh`
    - Windows PowerShell: `irm https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.ps1 | iex`
 3. Explain the machine changes before execution. After the user approves, run the bootstrap command instead of giving a long manual checklist.
 4. If `agent-bridge` exists but Git, GitHub CLI or Codex CLI/authentication is incomplete, show the plan from `agent-bridge env install` and ask for one consolidated approval. After approval, run `agent-bridge env install --yes`.
