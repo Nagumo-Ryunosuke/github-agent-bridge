@@ -8,6 +8,15 @@ from typing import Optional
 
 from .cli import build_parser as legacy_build_parser
 from .cli import main as legacy_main
+from .dependencies import (
+    DependencyInstallError,
+    apply_install_plan,
+    build_install_plan,
+    detect_environment,
+    format_environment_status,
+    format_install_plan,
+    login_environment,
+)
 from .git import GitError, repo_root
 from .service import ServiceError, install_service, restart_service, service_status, uninstall_service
 from .skill_install import SkillInstallError, install_skill, skill_status, uninstall_skill
@@ -22,9 +31,12 @@ def _root_help() -> str:
     return (
         legacy
         + "\n\nCross-platform Codex commands:\n"
+        + "  env       Check/install Git, GitHub CLI and Codex CLI prerequisites\n"
         + "  skill     Install/status/uninstall the Skill for Codex App, CLI and IDE\n"
         + "  service   Install/status/restart/uninstall the persistent local reviewer\n\n"
         + "Examples:\n"
+        + "  agent-bridge env status\n"
+        + "  agent-bridge env install\n"
         + "  agent-bridge skill install --scope user\n"
         + "  agent-bridge service install\n"
         + "  agent-bridge doctor\n"
@@ -74,6 +86,25 @@ def _skill_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _env_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="agent-bridge env",
+        description="Check and install cross-platform prerequisites for Codex App/CLI bridge operation",
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    status = sub.add_parser("status", help="Show Git/GitHub CLI/Codex CLI and authentication readiness")
+    status.add_argument("--skip-codex", action="store_true", help="Check dispatch-only desktop mode; do not require Codex CLI")
+    status.add_argument("--json", action="store_true", dest="json_output")
+
+    install = sub.add_parser("install", help="Install missing prerequisites after an explicit confirmation")
+    install.add_argument("--yes", action="store_true", help="Confirm the displayed machine changes non-interactively")
+    install.add_argument("--skip-codex", action="store_true", help="Install only dispatch prerequisites; skip Codex CLI")
+    install.add_argument("--skip-login", action="store_true", help="Install binaries but do not start interactive GitHub/Codex login")
+    install.add_argument("--json", action="store_true", dest="json_output")
+    return parser
+
+
 def _print_result(result: dict, *, json_output: bool) -> None:
     if json_output:
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -120,18 +151,81 @@ def _skill_main(argv: list[str]) -> int:
     return 0 if result.get("installed") and result.get("up_to_date") else 1
 
 
+def _env_main(argv: list[str]) -> int:
+    args = _env_parser().parse_args(argv)
+    include_codex = not args.skip_codex
+    status = detect_environment(include_codex=include_codex)
+
+    if args.action == "status":
+        if args.json_output:
+            print(json.dumps(status, ensure_ascii=False, indent=2))
+        else:
+            print(format_environment_status(status))
+        ready_key = "unattended_review_ready" if include_codex else "dispatch_ready"
+        return 0 if status[ready_key] else 1
+
+    steps = build_install_plan(status, include_codex=include_codex)
+    needs_login = (not args.skip_login) and (
+        not status["gh"].get("authenticated")
+        or (include_codex and not status["codex"].get("authenticated"))
+    )
+    requires_confirmation = bool(steps or needs_login)
+
+    if args.json_output and requires_confirmation and not args.yes:
+        print(json.dumps({
+            "status": status,
+            "install_plan": [step.as_dict() for step in steps],
+            "login_required": needs_login,
+            "confirmation_required": True,
+        }, ensure_ascii=False, indent=2))
+        return 2
+
+    if requires_confirmation and not args.yes:
+        print(format_install_plan(steps, status, include_codex=include_codex))
+        answer = input("Proceed with these machine changes? [y/N] ").strip().lower()
+        if answer not in {"y", "yes"}:
+            print("No changes made.")
+            return 2
+    elif not args.json_output:
+        print(format_install_plan(steps, status, include_codex=include_codex))
+
+    if steps:
+        apply_install_plan(steps)
+    if not args.skip_login:
+        final = login_environment(include_codex=include_codex)
+    else:
+        final = detect_environment(include_codex=include_codex)
+
+    if args.json_output:
+        print(json.dumps({
+            "status": final,
+            "install_plan": [step.as_dict() for step in steps],
+            "login_started": bool(needs_login and not args.skip_login),
+            "confirmation_required": False,
+        }, ensure_ascii=False, indent=2))
+    else:
+        print("\n" + format_environment_status(final))
+
+    binaries_ready = bool(final["git"].get("available") and final["gh"].get("available"))
+    if include_codex:
+        binaries_ready = binaries_ready and bool(final["codex"].get("available"))
+    return 0 if binaries_ready else 1
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     try:
         if not args or args in (["--help"], ["-h"]):
             print(_root_help())
             return 0
+        if args[0] == "env":
+            return _env_main(args[1:])
         if args[0] == "service":
             return _service_main(args[1:])
         if args[0] == "skill":
             return _skill_main(args[1:])
         return legacy_main(args)
-    except (RuntimeError, GitError, ServiceError, SkillInstallError, ValueError) as exc:
+    except (RuntimeError, GitError, ServiceError, SkillInstallError, DependencyInstallError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
