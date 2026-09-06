@@ -10,6 +10,11 @@ BIN_DIR="$HOME/.local/bin"
 YES=0
 SKIP_CODEX=0
 SKIP_LOGIN=0
+TTY_DEVICE=""
+
+if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+  TTY_DEVICE="/dev/tty"
+fi
 
 usage() {
   cat <<'EOF'
@@ -54,8 +59,13 @@ It may:
 System package installation may request sudo once. GitHub and Codex authentication
 remain interactive and are never bypassed or stored by github-agent-bridge.
 EOF
-  printf 'Proceed? [y/N] '
-  IFS= read -r answer || answer=""
+  if [ -z "$TTY_DEVICE" ]; then
+    echo "No interactive terminal is available for confirmation." >&2
+    echo "Rerun with --yes only if you have already reviewed these machine changes." >&2
+    exit 2
+  fi
+  printf 'Proceed? [y/N] ' >"$TTY_DEVICE"
+  IFS= read -r answer <"$TTY_DEVICE" || answer=""
   case "$answer" in
     y|Y|yes|YES|Yes) ;;
     *) echo "No changes made."; exit 2 ;;
@@ -187,12 +197,24 @@ set -- env install --yes
 if [ "$SKIP_CODEX" -eq 1 ]; then
   set -- "$@" --skip-codex
 fi
+
+LOGIN_DEFERRED=0
 if [ "$SKIP_LOGIN" -eq 1 ]; then
   set -- "$@" --skip-login
+elif [ -z "$TTY_DEVICE" ]; then
+  # A piped bootstrap has no useful stdin for interactive gh/codex login when
+  # there is no controlling terminal. Complete binary installation now and
+  # leave authentication for a later interactive `agent-bridge env install`.
+  set -- "$@" --skip-login
+  LOGIN_DEFERRED=1
 fi
 
 say "Installing/checking external prerequisites"
-"$VENV/bin/agent-bridge" "$@"
+if [ -n "$TTY_DEVICE" ]; then
+  "$VENV/bin/agent-bridge" "$@" <"$TTY_DEVICE"
+else
+  "$VENV/bin/agent-bridge" "$@"
+fi
 
 cat <<EOF
 
@@ -207,3 +229,15 @@ Open or restart Codex App/CLI so it reloads the Skill. Then open a target Git re
 and ask Codex to use \$github-agent-bridge. On first use it will run readiness checks,
 ask only for unresolved permission/authentication steps, and continue setup.
 EOF
+
+if [ "$LOGIN_DEFERRED" -eq 1 ]; then
+  cat <<'EOF'
+
+Authentication was deferred because no controlling terminal was available.
+From an interactive terminal run:
+
+  agent-bridge env install
+
+This will start any still-required GitHub and Codex login flows.
+EOF
+fi
