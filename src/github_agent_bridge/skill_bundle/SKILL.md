@@ -1,6 +1,6 @@
 ---
 name: github-agent-bridge
-description: Coordinate GitHub-mediated development where Codex analyzes and dispatches locally, ChatGPT Web/Work designs and implements, and Codex reviews each implementation PR with real local tests. Use for automated ChatGPT/Codex handoff, Task PR dispatch, exact-SHA review loops, or bridge setup/doctor/service operations.
+description: Coordinate GitHub-mediated development where Codex analyzes and dispatches locally, ChatGPT Web/Work designs and implements, and Codex reviews each implementation PR with real local tests. Use for automated ChatGPT/Codex handoff, Task PR dispatch, exact-SHA review loops, zero-touch setup, or cross-platform Codex App/CLI deployment.
 ---
 
 # GitHub Agent Bridge
@@ -12,13 +12,38 @@ Use this role split unless the user explicitly overrides it:
 - **Codex**: local requirement reconnaissance, task dispatch, second review, real test execution, debugging and verification.
 - **Human**: final merge/acceptance by default.
 
-## Before starting work
+## Self-bootstrap contract
+
+This Skill is designed for Codex App/Desktop, Codex CLI and Codex IDE surfaces on Windows, Linux and macOS.
+
+When the Skill is invoked, do not make the user manually install each dependency one by one.
+
+1. Try `agent-bridge env status` first.
+2. If `agent-bridge` itself is unavailable, detect the local OS and offer **one consolidated installation confirmation**:
+   - Linux/macOS: `curl -fsSL https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.sh | bash`
+   - Windows PowerShell: `irm https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.ps1 | iex`
+3. Explain the machine changes before execution. After the user approves, run the bootstrap command instead of giving a long manual checklist.
+4. If `agent-bridge` exists but Git, GitHub CLI or Codex CLI/authentication is incomplete, show the plan from `agent-bridge env install` and ask for one consolidated approval. After approval, run `agent-bridge env install --yes`.
+5. Never bypass OS elevation, GitHub authorization, or ChatGPT/Codex login. `sudo`, `gh auth login`, and `codex login` remain user-controlled interactive security boundaries.
+6. Re-run `agent-bridge env status` after installation. Do not claim readiness from an install command alone.
+
+The installer is architecture-neutral: it detects OS/CPU and delegates binaries to native package managers or the official OpenAI Codex installer. Full unattended review is only possible on platforms for which upstream GitHub CLI and Codex CLI builds/packages exist. On an unsupported CPU/OS, report the exact missing upstream capability instead of pretending the deployment succeeded.
+
+### Desktop-only vs full automation
+
+Codex App/Desktop can discover and use the same Skill from `$HOME/.agents/skills/github-agent-bridge` without using the terminal UI as the primary interface. However, the persistent background reviewer calls `codex exec --ephemeral`, so **Codex CLI is required for the full zero-touch review loop**, even when the user normally works in Codex Desktop.
+
+`agent-bridge env install --skip-codex` is only a dispatch/Desktop fallback and must not be described as full zero-touch readiness.
+
+## Before starting repository work
 
 1. Work from the real target repository.
-2. Run `agent-bridge doctor`.
-3. If setup is incomplete, prefer `agent-bridge setup bootstrap` and follow its remediation output.
-4. If the watcher service is missing, install it with `agent-bridge service install`.
-5. Never claim zero-touch readiness unless `agent-bridge doctor` reports `Zero-touch ready: YES`.
+2. Run `agent-bridge env status`; self-bootstrap missing local prerequisites as described above.
+3. Run `agent-bridge doctor`.
+4. If repository setup is incomplete, inspect the repository and infer a real authoritative test command from its existing tooling, then prefer `agent-bridge setup bootstrap` over asking the user to edit `.ai/config.json` manually.
+5. Ask only for genuinely security-sensitive attestations that cannot be inferred, such as confirming a tested write-capable GitHub connection or unattended-write policy. Never fabricate `--confirm-write`, `--confirm-unattended`, or Work-trigger confirmation.
+6. If the watcher service is missing, install it with `agent-bridge service install` after local prerequisites are ready.
+7. Never claim zero-touch readiness unless `agent-bridge doctor` reports `Zero-touch ready: YES`.
 
 ## On a new development request in Codex
 
@@ -62,11 +87,11 @@ Do not modify ChatGPT's implementation branch during normal review.
 
 ## Cross-platform setup
 
-Install this Skill for all local Codex surfaces with:
+The recommended first-install path is the one-command bootstrap in the self-bootstrap section. If the package is already installed, install/update the Skill with:
 
 `agent-bridge skill install --scope user`
 
-The installer writes real files to `$HOME/.agents/skills/github-agent-bridge`; this is the Codex USER skill root used by Codex App, CLI and IDE clients.
+The installer writes real files to `$HOME/.agents/skills/github-agent-bridge`; Codex App/Desktop, CLI and IDE clients share this user-level Skill root. Restart Codex after first installation or Skill upgrade.
 
 Install the persistent watcher with:
 
@@ -88,3 +113,4 @@ See `references/cross-platform.md` and `references/automation.md` for operationa
 - Keep final merge human-controlled unless the user explicitly changes the policy.
 - Do not grant GitHub admin/secrets/delete permissions just to simplify setup.
 - Local test commands execute implementation PR code; use an appropriate machine/container/VM.
+- Do not hide installation commands or authorization steps from the user. Consolidate prompts, but preserve meaningful consent.
