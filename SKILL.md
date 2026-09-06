@@ -1,6 +1,6 @@
 ---
 name: github-agent-bridge
-description: Automate GitHub-mediated development where Codex locally analyzes and dispatches, ChatGPT Web/Work designs and implements, and Codex reviews each implementation PR with real tests. Use for automated ChatGPT/Codex handoff, Task PR dispatch, exact-SHA review loops, zero-touch setup, or cross-platform Codex App/CLI watcher service management.
+description: Automate GitHub-mediated development where Codex locally analyzes and dispatches, ChatGPT Web/Work designs and implements, and Codex reviews each implementation PR with real tests. Use for automated ChatGPT/Codex handoff, Task PR dispatch, exact-SHA review loops, zero-touch setup, cross-platform one-command deployment, or Codex App/CLI watcher service management.
 ---
 
 # GitHub Agent Bridge
@@ -14,33 +14,54 @@ Treat this role split as the default architecture:
 
 Do not silently invert these roles. Codex should not become the primary implementer unless ChatGPT write capability is unavailable or the user explicitly asks for a local fallback.
 
+## Self-bootstrap and permission protocol
+
+The user should be able to read the README, run one bootstrap command, then use this Skill from Codex App/Desktop or Codex CLI without manually installing each dependency.
+
+When this Skill is invoked:
+
+1. Try `agent-bridge env status` first.
+2. If `agent-bridge` is not installed, detect the operating system and offer **one consolidated installation confirmation**. After approval, run the appropriate one-command bootstrap:
+   - Linux/macOS: `curl -fsSL https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.sh | bash`
+   - Windows PowerShell: `irm https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.ps1 | iex`
+3. If `agent-bridge` exists but local dependencies are incomplete, show the installation plan produced by `agent-bridge env install`, ask once, then run `agent-bridge env install --yes` after approval.
+4. Do not ask separately for every package. Consolidate non-sensitive machine changes into one approval whenever possible.
+5. Do not bypass security boundaries. OS elevation (`sudo`/installer elevation), GitHub authorization (`gh auth login`) and ChatGPT/Codex account login (`codex login`) remain interactive user actions.
+6. Re-run `agent-bridge env status` after changes. Installation success is not equivalent to authentication/readiness.
+
+The bootstrap is deliberately architecture-neutral: Python code does not hard-code x86 paths, Linux uses the detected distribution package manager, Windows uses WinGet, macOS uses native tooling/Homebrew when necessary, and Codex CLI is installed using OpenAI's architecture-aware official installer. Full automation still depends on upstream GitHub CLI and Codex CLI availability for the actual OS/CPU. If an upstream binary/package does not exist for a platform, report that boundary precisely and retain whatever Skill/dispatch functionality is available.
+
 ## Codex App / CLI portability
 
-This Skill is intended to behave the same from Codex App, Codex CLI, and Codex IDE clients.
+This Skill is intended to behave the same from Codex App/Desktop, Codex CLI, and Codex IDE clients.
 
 Prefer a user installation so every local Codex surface can discover the same Skill:
 
 `agent-bridge skill install --scope user`
 
-The installer writes real files to `$HOME/.agents/skills/github-agent-bridge`, the Codex USER Skill root. Restart Codex if a newly installed Skill is not visible immediately.
+The installer writes real files to `$HOME/.agents/skills/github-agent-bridge`, the Codex USER Skill root. Restart Codex if a newly installed/updated Skill is not visible immediately.
 
 For repository-only distribution, use:
 
 `agent-bridge skill install --scope repo`
+
+**Important:** the Codex Desktop/App interface can use this Skill without being the CLI interface, but the persistent unattended reviewer invokes `codex exec --ephemeral`. Therefore Codex CLI remains a runtime dependency for the full zero-touch review loop. `agent-bridge env install --skip-codex` is only a desktop/dispatch fallback, not full readiness.
 
 Read `references/cross-platform.md` for OS-specific service behavior.
 
 ## On a new development request in Codex
 
 1. Inspect the real local repository, relevant instructions, tests, architecture, and constraints.
-2. If the bridge has not been configured, prefer `agent-bridge setup bootstrap` over asking the user to edit `.ai/config.json` manually.
-3. Run `agent-bridge doctor`. Treat `zero_touch_ready=false` as a setup/capability issue; do not claim the unattended loop is operational until critical checks pass.
-4. Summarize the task into a narrow implementable contract; do not spend tokens implementing the full change yet.
-5. Create a commit-pinned task with ChatGPT as developer and Codex as reviewer.
-6. Run `agent-bridge drift <TASK>` before dispatch. Treat code drift as a replanning signal; `.ai/`-only drift is metadata and may be safe.
-7. Run `agent-bridge validate`.
-8. Publish automatically with `agent-bridge publish task <TASK>` rather than asking the user to manually create a PR.
-9. Stop local implementation work and let the GitHub event-triggered ChatGPT Work task take ownership.
+2. Run `agent-bridge env status`. If local prerequisites are incomplete, follow the self-bootstrap protocol above instead of giving a manual dependency checklist.
+3. If the bridge has not been configured for this repository, inspect the existing project tooling and infer a real authoritative test command, then prefer `agent-bridge setup bootstrap` over asking the user to edit `.ai/config.json` manually.
+4. Run `agent-bridge doctor`. Treat `zero_touch_ready=false` as a setup/capability issue; do not claim the unattended loop is operational until critical checks pass.
+5. Ask only for genuinely non-inferable security attestations. Never fabricate `--confirm-write`, `--confirm-unattended`, or Work-trigger confirmation.
+6. Summarize the task into a narrow implementable contract; do not spend tokens implementing the full change yet.
+7. Create a commit-pinned task with ChatGPT as developer and Codex as reviewer.
+8. Run `agent-bridge drift <TASK>` before dispatch. Treat code drift as a replanning signal; `.ai/`-only drift is metadata and may be safe.
+9. Run `agent-bridge validate`.
+10. Publish automatically with `agent-bridge publish task <TASK>` rather than asking the user to manually create a PR.
+11. Stop local implementation work and let the GitHub event-triggered ChatGPT Work task take ownership.
 
 ## ChatGPT Work implementation policy
 
@@ -101,14 +122,14 @@ Prefer:
 
 `agent-bridge setup bootstrap ...`
 
-The CLI can configure and verify the local/GitHub side, but ChatGPT Work event-triggered tasks currently require one interactive creation step on ChatGPT Web/iOS/Android. Desktop can view existing triggers but cannot currently create/edit their trigger conditions.
+The CLI can configure and verify the local/GitHub side, but ChatGPT Work event-triggered tasks may still require an interactive platform creation step when no supported programmatic action is available.
 
-Create two event-triggered ChatGPT Work tasks:
+Create/verify two event-triggered ChatGPT Work tasks for the repository scope:
 
 1. Task PR opened/ready + `agent-bridge:task` marker → implementation workflow.
 2. New PR comment + `agent-bridge:codex-review` + `verdict=REVISE` → fix workflow.
 
-After both are created, run:
+After both are actually created, run:
 
 `agent-bridge setup work-trigger --confirm`
 
@@ -136,6 +157,7 @@ Do not trigger ChatGPT on every implementation commit update; Codex watcher alre
 - Service installers use per-user OS facilities and should not require repository-admin, secrets, delete, or machine-admin permissions.
 - Keep final merge human-controlled by default.
 - Do not set `--confirm-write`, `--confirm-unattended`, or Work-trigger confirmation unless the actual platform behavior has been verified for the current repository scope.
+- Do not hide installation commands or permission changes from the user. Minimize prompts without weakening consent.
 
 ## References
 
