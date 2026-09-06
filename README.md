@@ -32,8 +32,10 @@ irm https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/
 ### Linux / macOS
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.sh | sh
 ```
+
+The Unix bootstrap is POSIX-sh compatible, so it does not require Bash on minimal Linux distributions.
 
 The bootstrap shows one consolidated machine-change confirmation and then, as needed:
 
@@ -112,7 +114,7 @@ Primary tested operating systems:
 | --- | --- |
 | Windows | PowerShell + WinGet / per-user Task Scheduler |
 | Linux | detected package manager / `systemd --user` |
-| macOS | shell + native/Homebrew tooling / LaunchAgent |
+| macOS | POSIX shell + native/Homebrew tooling / LaunchAgent |
 
 Linux package-manager detection currently covers:
 
@@ -238,7 +240,7 @@ The readiness gate checks, among other things:
 - bridge initialization;
 - GitHub origin and repository access;
 - GitHub CLI installation/authentication;
-- Codex CLI availability;
+- Codex CLI availability and `codex login status` authentication;
 - ChatGPT/GitHub writer capability and unattended policy confirmation;
 - repository allowlist;
 - repository-scoped Work trigger confirmation;
@@ -335,11 +337,12 @@ Local tests execute implementation PR code. Use an appropriate machine/container
 
 ## Development / CI
 
-The unit suite runs on Linux, macOS and Windows across Python 3.9, 3.11 and 3.13. Python 3.11 jobs also build the wheel and verify that the bundled Skill assets are included.
+The unit suite runs on Linux, macOS and Windows across Python 3.9, 3.11 and 3.13. Python 3.11 jobs also build the wheel and verify that the bundled Skill assets are included. CI additionally parses both bootstrap scripts so syntax regressions are caught on their native platforms.
 
 ```bash
 python -m unittest discover -s tests -v
 python -m compileall -q src tests
+sh -n scripts/bootstrap.sh
 ```
 
 ## Useful commands
