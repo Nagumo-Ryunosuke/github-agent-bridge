@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 
@@ -203,8 +204,8 @@ def build_install_plan(
     if system == "Darwin":
         brew = which("brew")
         if (need_git or need_gh) and not brew:
-            shell = which("/bin/bash") or "/bin/bash"
-            brew_install = '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
+            shell = "/bin/bash"
+            brew_install = 'NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
             steps.append(InstallStep("homebrew", "Install Homebrew for missing macOS packages", (shell, "-c", brew_install)))
             brew = _default_brew_path(architecture)
         packages: list[str] = []
@@ -233,9 +234,30 @@ def build_install_plan(
     return steps
 
 
-def _refresh_windows_path() -> None:
+def _prepend_path(path: Path) -> None:
+    value = str(path.expanduser())
+    entries = [item for item in os.environ.get("PATH", "").split(os.pathsep) if item]
+    if value not in entries:
+        os.environ["PATH"] = os.pathsep.join([value, *entries])
+
+
+def _refresh_process_path() -> None:
+    home = Path.home()
+    _prepend_path(home / ".local" / "bin")
+    _prepend_path(home / "bin")
+
+    if platform.system() == "Darwin":
+        _prepend_path(Path("/opt/homebrew/bin"))
+        _prepend_path(Path("/usr/local/bin"))
+        return
+
     if platform.system() != "Windows":
         return
+
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        _prepend_path(Path(local_app_data) / "github-agent-bridge" / "bin")
+
     powershell = shutil.which("powershell") or shutil.which("powershell.exe") or shutil.which("pwsh")
     if not powershell:
         return
@@ -246,7 +268,13 @@ def _refresh_windows_path() -> None:
     )
     proc = _run([powershell, "-NoProfile", "-Command", command], True)
     if proc.returncode == 0 and proc.stdout.strip():
-        os.environ["PATH"] = proc.stdout.strip()
+        persisted = [item for item in proc.stdout.strip().split(";") if item]
+        current = [item for item in os.environ.get("PATH", "").split(os.pathsep) if item]
+        merged: list[str] = []
+        for item in [*persisted, *current]:
+            if item not in merged:
+                merged.append(item)
+        os.environ["PATH"] = os.pathsep.join(merged)
 
 
 def apply_install_plan(steps: list[InstallStep], *, runner: Runner = _run) -> None:
@@ -257,7 +285,7 @@ def apply_install_plan(steps: list[InstallStep], *, runner: Runner = _run) -> No
                 f"dependency step `{step.name}` failed with exit code {proc.returncode}; "
                 "no readiness flag was written, so rerunning the installer is safe"
             )
-    _refresh_windows_path()
+    _refresh_process_path()
 
 
 def login_environment(
@@ -266,6 +294,7 @@ def login_environment(
     which: Which = shutil.which,
     runner: Runner = _run,
 ) -> dict[str, Any]:
+    _refresh_process_path()
     status = detect_environment(include_codex=include_codex, which=which, runner=runner)
     gh_path = status["gh"].get("path")
     if gh_path and not status["gh"].get("authenticated"):
@@ -273,6 +302,7 @@ def login_environment(
         if proc.returncode != 0:
             raise DependencyInstallError(f"`gh auth login` failed with exit code {proc.returncode}")
 
+    _refresh_process_path()
     status = detect_environment(include_codex=include_codex, which=which, runner=runner)
     codex_path = status["codex"].get("path")
     if include_codex and codex_path and not status["codex"].get("authenticated"):
@@ -280,6 +310,7 @@ def login_environment(
         if proc.returncode != 0:
             raise DependencyInstallError(f"`codex login` failed with exit code {proc.returncode}")
 
+    _refresh_process_path()
     return detect_environment(include_codex=include_codex, which=which, runner=runner)
 
 
