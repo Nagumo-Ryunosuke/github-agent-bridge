@@ -165,7 +165,7 @@ def doctor_report(
             "run `gh auth login` on the Codex/reviewer machine",
         ))
     else:
-        checks.append(_check("github_cli", "fail", "GitHub CLI (`gh`) was not found", "install GitHub CLI and authenticate it"))
+        checks.append(_check("github_cli", "fail", "GitHub CLI (`gh`) was not found", "run `agent-bridge env install` to install GitHub CLI and authenticate it"))
 
     repo_access = False
     if gh_path and gh_authenticated and repository and host and host.lower() == "github.com":
@@ -183,16 +183,47 @@ def doctor_report(
     if not codex_path and ("/" in codex_command or "\\" in codex_command):
         candidate = Path(codex_command).expanduser()
         codex_path = str(candidate) if candidate.exists() else None
+
+    codex_available = False
+    codex_authenticated = False
     if codex_path:
         codex_version = runner([codex_path, "--version"], repo)
+        codex_available = codex_version.returncode == 0
         checks.append(_check(
             "codex_cli",
-            "pass" if codex_version.returncode == 0 else "fail",
-            "Codex CLI is available" if codex_version.returncode == 0 else "Codex CLI command exists but failed to run",
-            "verify the configured review.codex_command and Codex installation",
+            "pass" if codex_available else "fail",
+            "Codex CLI is available" if codex_available else "Codex CLI command exists but failed to run",
+            "verify the configured review.codex_command and Codex installation; `agent-bridge env install` can repair the default setup",
         ))
+        if codex_available:
+            codex_login = runner([codex_path, "login", "status"], repo)
+            codex_authenticated = codex_login.returncode == 0
+            checks.append(_check(
+                "codex_auth",
+                "pass" if codex_authenticated else "fail",
+                "Codex CLI is authenticated" if codex_authenticated else "Codex CLI is installed but not authenticated",
+                "run `codex login` or `agent-bridge env install` and complete the ChatGPT sign-in flow",
+            ))
+        else:
+            checks.append(_check(
+                "codex_auth",
+                "fail",
+                "Codex authentication cannot be verified because the CLI is not runnable",
+                "repair the Codex CLI installation, then run `codex login`",
+            ))
     else:
-        checks.append(_check("codex_cli", "fail", f"Codex CLI was not found: {codex_command}", "install Codex CLI or configure `agent-bridge setup review --codex-command ...`"))
+        checks.append(_check(
+            "codex_cli",
+            "fail",
+            f"Codex CLI was not found: {codex_command}",
+            "run `agent-bridge env install` or configure `agent-bridge setup review --codex-command ...`",
+        ))
+        checks.append(_check(
+            "codex_auth",
+            "fail",
+            "Codex authentication cannot be verified because the CLI is missing",
+            "install Codex CLI and complete `codex login`",
+        ))
 
     writer = detect_writer(repo)
     checks.append(_check(
@@ -230,7 +261,7 @@ def doctor_report(
         "chatgpt_work_trigger",
         "pass" if trigger_scoped else "fail",
         trigger_message,
-        "create/verify the two Work triggers for this repository on ChatGPT Web/iOS/Android, then run `agent-bridge setup work-trigger --confirm`",
+        "create/verify the two Work triggers for this repository, then run `agent-bridge setup work-trigger --confirm`",
     ))
 
     test_commands = list(config["review"].get("test_commands") or [])
