@@ -1,76 +1,121 @@
 # Cross-platform Codex App / CLI setup
 
-The bridge separates **Skill discovery** from the **persistent local watcher** so Codex App, CLI and IDE clients can share the same workflow.
+`github-agent-bridge` separates **Skill discovery** from the **persistent local reviewer**, while giving both a single cross-platform bootstrap path.
 
-## 1. Install the Skill once for the user
+## Recommended first install
+
+No clone is required.
+
+### Windows PowerShell
+
+```powershell
+irm https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.ps1 | iex
+```
+
+### Linux / macOS
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.sh | bash
+```
+
+The bootstrap displays one consolidated machine-change confirmation, creates a private user virtual environment, installs/updates the bridge and shared Skill, detects missing local tooling, installs supported dependencies, then starts missing GitHub/Codex login flows.
+
+Authentication and elevation are not bypassed. `sudo`, `gh auth login`, `codex login`, GitHub write confirmation and unattended-write confirmation remain user-controlled security boundaries.
+
+## Environment self-check
+
+After the package exists, the Skill should prefer these commands over a manual dependency checklist:
+
+```bash
+agent-bridge env status
+agent-bridge env install
+```
+
+After the user approves the consolidated plan:
+
+```bash
+agent-bridge env install --yes
+```
+
+For Desktop-only task dispatch where the unattended reviewer is intentionally disabled:
+
+```bash
+agent-bridge env status --skip-codex
+agent-bridge env install --skip-codex
+```
+
+This is not full zero-touch readiness because the persistent reviewer invokes `codex exec --ephemeral`.
+
+## Shared Skill discovery
+
+The recommended user Skill location is:
+
+```text
+$HOME/.agents/skills/github-agent-bridge
+```
+
+Install/update manually when needed:
 
 ```bash
 agent-bridge skill install --scope user
 agent-bridge skill status --scope user
 ```
 
-The installer copies real files to:
+Codex Desktop/App, Codex CLI and supported IDE clients share this user-level Skill root. Restart the client after first installation or an update if the Skill is not visible immediately.
 
-```text
-$HOME/.agents/skills/github-agent-bridge
-```
-
-This is the Codex USER Skill location. Real files are used rather than a symlinked `SKILL.md`. Restart the Codex client if a newly installed Skill is not shown immediately.
-
-A repository-local copy is also supported when desired:
+Repository-local installation remains available:
 
 ```bash
 agent-bridge skill install --scope repo
 ```
 
-which writes `.agents/skills/github-agent-bridge` in the current repository.
+## Platform / architecture strategy
 
-## 2. Install the persistent reviewer service
+The Python bridge itself is architecture-neutral. The installer detects the operating system/CPU and delegates architecture-specific binaries to supported package managers and official upstream installers.
 
-From each repository that should receive automatic Codex reviews:
+### Windows
+
+- Python/Git/GitHub CLI: WinGet where installation is required.
+- Codex CLI: official OpenAI PowerShell installer.
+- Persistent reviewer: per-user Task Scheduler task with `LIMITED` run level.
+
+### Linux
+
+Package-manager detection covers:
+
+```text
+apt-get / dnf / yum / zypper / pacman / apk
+```
+
+Codex CLI is installed through the official OpenAI architecture-aware shell installer. The persistent reviewer uses `systemd --user` when available.
+
+If the machine is WSL, either enable a working user systemd manager or run the bridge natively on Windows and use Task Scheduler.
+
+### macOS
+
+The bootstrap uses the existing Python/Homebrew environment as needed and the persistent reviewer uses a LaunchAgent under `~/Library/LaunchAgents`.
+
+Full automation is bounded by upstream availability. If Python, GitHub CLI or Codex CLI does not provide a usable package/binary for a particular OS/CPU, the bridge must report the missing upstream capability instead of claiming success.
+
+## Persistent reviewer service
+
+From each repository that should receive automatic reviews:
 
 ```bash
 agent-bridge service install
 agent-bridge service status
+agent-bridge service restart
+agent-bridge service uninstall
 ```
 
-The default `auto` backend maps to:
+The service uses the Python interpreter that executed `agent-bridge service install` and each repository gets a distinct service identity derived from its resolved local path.
 
-| Platform | Backend | Scope |
-| --- | --- | --- |
-| Linux | `systemd --user` | current user |
-| macOS | LaunchAgent / `launchctl` | current GUI user |
-| Windows | Task Scheduler | current user, LIMITED run level |
+## Runtime truth
 
-The service uses the Python interpreter that executed `agent-bridge service install`; installation fails if that interpreter cannot import `github_agent_bridge`.
-
-### Linux
-
-The unit is written under `~/.config/systemd/user`. v1.4 requires a working user systemd manager for automatic Linux startup. If Codex is running inside WSL, enable WSL systemd or run the bridge from native Windows and use the Windows Task Scheduler backend.
-
-### macOS
-
-A LaunchAgent plist is written under `~/Library/LaunchAgents`, bootstrapped into `gui/<uid>`, and configured to restart the watcher after failures.
-
-### Windows
-
-A per-user scheduled task is created with `ONLOGON` and `LIMITED` run level. A generated `.cmd` wrapper changes to the repository before starting the watcher. The task does not require repository-admin or machine-admin privileges.
-
-## 3. Runtime truth
-
-Service-manager state is useful operational information, but `agent-bridge doctor` remains authoritative because it verifies the watcher's Git-private heartbeat in addition to GitHub access, Codex availability, writer scope, Work triggers and test policy.
+Service-manager state alone is not enough. The final readiness source of truth is:
 
 ```bash
-agent-bridge service status
 agent-bridge doctor
 ```
 
-## 4. Maintenance
-
-```bash
-agent-bridge service restart
-agent-bridge service uninstall
-agent-bridge skill uninstall --scope user
-```
-
-Each repository has a distinct service identity derived from its resolved local path, so multiple repositories can run independent watchers for the same user.
+`Zero-touch ready: YES` requires the local executables/authentication, repository access, writer scope, Work triggers, test policy and a fresh long-running watcher heartbeat to all be ready.
