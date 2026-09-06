@@ -70,7 +70,7 @@ def detect_environment(
         codex_authenticated = proc.returncode == 0
 
     dispatch_ready = bool(git_path and gh_path and gh_authenticated)
-    unattended_review_ready = bool(dispatch_ready and codex_path and codex_authenticated) if include_codex else dispatch_ready
+    unattended_review_ready = bool(include_codex and dispatch_ready and codex_path and codex_authenticated)
 
     return {
         "platform": system,

@@ -74,7 +74,7 @@ class DependenciesCase(unittest.TestCase):
 
         status = detect_environment(include_codex=False, which=paths.get, runner=runner, platform_name="Windows")
         self.assertTrue(status["dispatch_ready"])
-        self.assertTrue(status["unattended_review_ready"])
+        self.assertFalse(status["unattended_review_ready"])
         self.assertFalse(status["codex"]["required"])
 
 

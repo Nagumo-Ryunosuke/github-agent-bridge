@@ -12,7 +12,7 @@ SKIP_CODEX=0
 SKIP_LOGIN=0
 TTY_DEVICE=""
 
-if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+if ( : <>/dev/tty ) 2>/dev/null; then
   TTY_DEVICE="/dev/tty"
 fi
 

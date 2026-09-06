@@ -19,7 +19,7 @@ codex login status
 gh repo view Nagumo-Ryunosuke/github-agent-bridge
 ```
 
-Codex App 中可以聊天不代表独立 CLI 已登录。`doctor` 当前只检查 Codex 可执行文件是否存在，必须另外检查登录状态。
+Codex App 中可以聊天不代表独立 CLI 已登录。自 1.5.0 起，`doctor` 会同时检查 Codex 可执行文件及登录状态，也可以用 `agent-bridge env status` 单独检查本机依赖。
 
 ## 2. 安装 CLI 和 Skill
 
