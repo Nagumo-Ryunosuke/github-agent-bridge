@@ -162,7 +162,7 @@ def doctor_report(
             "github_cli",
             "pass" if gh_authenticated else "fail",
             "GitHub CLI is installed and authenticated" if gh_authenticated else "GitHub CLI is installed but not authenticated for github.com",
-            "run `gh auth login` on the Codex/reviewer machine",
+            "run `gh auth login -w` in the system default browser on the Codex/reviewer machine",
         ))
     else:
         checks.append(_check("github_cli", "fail", "GitHub CLI (`gh`) was not found", "run `agent-bridge env install` to install GitHub CLI and authenticate it"))

@@ -11,9 +11,11 @@ py --version
 git --version
 gh --version
 codex --version
-gh auth login
+gh auth login -w
 gh auth setup-git
 codex login
+
+GitHub 和 Codex 登录都会打开系统默认浏览器；Windows 通常会使用 Chrome。只有用户明确要求时才改用 Codex 内置浏览器。
 gh auth status
 codex login status
 gh repo view Nagumo-Ryunosuke/github-agent-bridge

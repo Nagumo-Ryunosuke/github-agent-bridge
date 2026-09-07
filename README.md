@@ -45,7 +45,7 @@ The bootstrap shows one consolidated machine-change confirmation and then, as ne
 - installs Git and GitHub CLI (`gh`);
 - installs Codex CLI using the official OpenAI installer or supported native tooling;
 - installs the shared Skill at `$HOME/.agents/skills/github-agent-bridge`;
-- starts `gh auth login` and `codex login` when authentication is missing.
+- starts `gh auth login -w` and `codex login` when authentication is missing. Both flows use the system default browser (usually Chrome on Windows); the in-app browser is not required.
 
 GitHub authorization, ChatGPT/Codex login, OS elevation and explicit repository write/unattended-write attestations are intentionally **not bypassed**.
 

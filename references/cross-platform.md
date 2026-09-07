@@ -20,7 +20,7 @@ curl -fsSL https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridg
 
 The Unix installer is POSIX-sh compatible and does not require Bash.
 
-The bootstrap displays one consolidated machine-change confirmation, creates a private user virtual environment, installs/updates the bridge and shared Skill, detects missing local tooling, installs supported dependencies, then starts missing GitHub/Codex login flows.
+The bootstrap displays one consolidated machine-change confirmation, creates a private user virtual environment, installs/updates the bridge and shared Skill, detects missing local tooling, installs supported dependencies, then starts missing GitHub/Codex login flows in the system default browser (usually Chrome on Windows).
 
 Authentication and elevation are not bypassed. `sudo`, `gh auth login`, `codex login`, GitHub write confirmation and unattended-write confirmation remain user-controlled security boundaries.
 

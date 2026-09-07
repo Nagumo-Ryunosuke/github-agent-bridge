@@ -27,8 +27,9 @@ When this Skill is invoked:
    - Windows PowerShell: `irm https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.ps1 | iex`
 4. If `agent-bridge` exists but local dependencies are incomplete, show the installation plan produced by `agent-bridge env install`, ask once, then run `agent-bridge env install --yes` after approval.
 5. Do not ask separately for every package. Consolidate non-sensitive machine changes into one approval whenever possible.
-6. Do not bypass security boundaries. OS elevation (`sudo`/installer elevation), GitHub authorization (`gh auth login`) and ChatGPT/Codex account login (`codex login`) remain interactive user actions.
-7. Re-run `agent-bridge env status` after changes. Installation success is not equivalent to authentication/readiness.
+6. Use the system default browser for authentication (usually Chrome on Windows). GitHub login must use `gh auth login -w`; Codex login opens its OAuth page in the system default browser. Do not route these flows through the Codex in-app browser unless the user explicitly asks.
+7. Do not bypass security boundaries. OS elevation, GitHub authorization and ChatGPT/Codex account login remain interactive user actions.
+8. Re-run `agent-bridge env status` after changes. Installation success is not equivalent to authentication/readiness.
 
 The bootstrap is deliberately architecture-neutral: Python code does not hard-code x86 paths, Linux uses the detected distribution package manager, Windows uses WinGet, macOS uses native tooling/Homebrew when necessary, and Codex CLI is installed using OpenAI's architecture-aware official installer. Full automation still depends on upstream GitHub CLI and Codex CLI availability for the actual OS/CPU. If an upstream binary/package does not exist for a platform, report that boundary precisely and retain whatever Skill/dispatch functionality is available.
 

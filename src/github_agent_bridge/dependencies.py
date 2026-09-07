@@ -298,7 +298,7 @@ def login_environment(
     status = detect_environment(include_codex=include_codex, which=which, runner=runner)
     gh_path = status["gh"].get("path")
     if gh_path and not status["gh"].get("authenticated"):
-        proc = runner([str(gh_path), "auth", "login", "-h", "github.com"], False)
+        proc = runner([str(gh_path), "auth", "login", "-h", "github.com", "-w"], False)
         if proc.returncode != 0:
             raise DependencyInstallError(f"`gh auth login` failed with exit code {proc.returncode}")
 

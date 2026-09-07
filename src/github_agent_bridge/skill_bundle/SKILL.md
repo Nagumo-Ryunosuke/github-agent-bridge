@@ -25,8 +25,9 @@ When the Skill is invoked, do not make the user manually install each dependency
    - Windows PowerShell: `irm https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.ps1 | iex`
 4. Explain the machine changes before execution. After the user approves, run the bootstrap command instead of giving a long manual checklist.
 5. If `agent-bridge` exists but Git, GitHub CLI or Codex CLI/authentication is incomplete, show the plan from `agent-bridge env install` and ask for one consolidated approval. After approval, run `agent-bridge env install --yes`.
-6. Never bypass OS elevation, GitHub authorization, or ChatGPT/Codex login. `sudo`, `gh auth login`, and `codex login` remain user-controlled interactive security boundaries.
-7. Re-run `agent-bridge env status` after installation. Do not claim readiness from an install command alone.
+6. Use the system default browser for authentication (usually Chrome on Windows). GitHub login must use `gh auth login -w`; Codex login opens its OAuth page in the system default browser. Do not route these flows through the Codex in-app browser unless the user explicitly asks.
+7. Never bypass OS elevation, GitHub authorization, or ChatGPT/Codex login. These remain user-controlled interactive security boundaries.
+8. Re-run `agent-bridge env status` after installation. Do not claim readiness from an install command alone.
 
 The installer is architecture-neutral: it detects OS/CPU and delegates binaries to native package managers or the official OpenAI Codex installer. Full unattended review is only possible on platforms for which upstream GitHub CLI and Codex CLI builds/packages exist. On an unsupported CPU/OS, report the exact missing upstream capability instead of pretending the deployment succeeded.
 
@@ -49,12 +50,13 @@ Codex App/Desktop can discover and use the same Skill from `$HOME/.agents/skills
 ## On a new development request in Codex
 
 1. Inspect the repository, relevant instructions, tests and constraints locally.
-2. Do only enough analysis to produce a narrow implementation contract; do not spend Codex usage implementing the full change.
-3. Create a task with ChatGPT as developer and Codex as reviewer.
-4. Check commit drift with `agent-bridge drift <TASK>`.
-5. Validate collaboration state with `agent-bridge validate`.
-6. Dispatch using `agent-bridge publish task <TASK>`.
-7. Stop local implementation and let the GitHub event-triggered ChatGPT Work task take ownership.
+2. If the user supplies a GitHub remote URL, run `agent-bridge connect <REMOTE_URL>` first so the standard `.ai/` bridge files are present.
+3. Do only enough analysis to produce a narrow implementation contract; do not spend Codex usage implementing the full change.
+4. Create a task with ChatGPT as developer and Codex as reviewer.
+5. Check commit drift with `agent-bridge drift <TASK>`.
+6. Validate collaboration state with `agent-bridge validate`.
+7. Dispatch using `agent-bridge publish task <TASK>`.
+8. Stop local implementation and let the GitHub event-triggered ChatGPT Work task take ownership.
 
 ## ChatGPT implementation contract
 
