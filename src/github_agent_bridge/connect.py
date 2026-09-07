@@ -18,6 +18,19 @@ from .git import repo_root, run_git
 from .skill_install import install_skill
 
 
+def _safe_run_git(repo: Path, *args: str, check: bool = True) -> str:
+    """Run Git with a repository-scoped ownership exception only for this call."""
+    return run_git(repo, "-c", f"safe.directory={repo.resolve()}", *args, check=check)
+
+
+def _safe_doctor_runner(repo: Path, command: list[str], cwd: Path):
+    if command and command[0].lower() == "git":
+        command = [command[0], "-c", f"safe.directory={repo.resolve()}", *command[1:]]
+    proc = subprocess.run(command, cwd=cwd, text=True, encoding="utf-8",
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return proc
+
+
 def normalize_remote(remote: str) -> tuple[str, str]:
     """Accept clone URLs only, never credentials, arbitrary hosts or Git options."""
     match = re.fullmatch(
@@ -42,9 +55,9 @@ def check_destination(destination: Path, slug: str) -> bool:
         return False
     if not destination.is_dir() or not (destination / ".git").exists():
         raise ValueError(f"Destination already exists and is not a Git checkout: {destination}; use --directory for another location")
-    if repo_root(destination) != destination.resolve():
+    if Path(_safe_run_git(destination, "rev-parse", "--show-toplevel")) != destination.resolve():
         raise ValueError("Destination must be the checkout root")
-    existing, _ = normalize_remote(run_git(destination, "remote", "get-url", "origin"))
+    existing, _ = normalize_remote(_safe_run_git(destination, "remote", "get-url", "origin"))
     if existing.lower() != slug.lower():
         raise ValueError(f"Destination belongs to {existing}, not {slug}; no files were changed")
     return True
@@ -73,8 +86,10 @@ def infer_tests(repo: Path) -> list[str]:
         return ["go test ./..."]
     tests = list((repo / "tests").glob("test*.py"))
     if tests:
-        python = subprocess.list2cmdline([sys.executable]) if os.name == "nt" else shlex.quote(sys.executable)
-        uses_pytest = any(re.search(r"(?:^|\n)\s*(?:import pytest|from pytest\b|def test_)", p.read_text(encoding="utf-8")) for p in tests)
+        # Keep the persisted task contract portable; the watcher supplies its
+        # configured interpreter through PATH on the local machine.
+        python = "python"
+        uses_pytest = any(re.search(r"(?:^|\n)\s*(?:import pytest|from pytest\b)", p.read_text(encoding="utf-8")) for p in tests)
         command = f"{python} -m pytest" if uses_pytest else f"{python} -m unittest discover -s tests -v"
         # Worktrees must import their own source, not an editable install elsewhere.
         prefix = 'set "PYTHONPATH=src" && ' if os.name == "nt" else "PYTHONPATH=src "
@@ -98,15 +113,15 @@ def prepare_repository(
         runner(["git", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential",
                 "clone", "--", url, str(destination)])
     # Empty repositories cannot support exact-base task contracts yet.
-    run_git(destination, "rev-parse", "--verify", "HEAD")
+    _safe_run_git(destination, "rev-parse", "--verify", "HEAD")
     # Scope authentication helpers to this checkout, not the user's global Git config.
-    run_git(destination, "config", "credential.https://github.com.helper", "!gh auth git-credential")
-    if not run_git(destination, "config", "user.name", check=False) or not run_git(destination, "config", "user.email", check=False):
+    _safe_run_git(destination, "config", "credential.https://github.com.helper", "!gh auth git-credential")
+    if not _safe_run_git(destination, "config", "user.name", check=False) or not _safe_run_git(destination, "config", "user.email", check=False):
         user = json.loads(runner(["gh", "api", "user"]))
-        if not run_git(destination, "config", "user.name", check=False):
-            run_git(destination, "config", "user.name", user["login"])
-        if not run_git(destination, "config", "user.email", check=False):
-            run_git(destination, "config", "user.email", f"{user['id']}+{user['login']}@users.noreply.github.com")
+        if not _safe_run_git(destination, "config", "user.name", check=False):
+            _safe_run_git(destination, "config", "user.name", user["login"])
+        if not _safe_run_git(destination, "config", "user.email", check=False):
+            _safe_run_git(destination, "config", "user.email", f"{user['id']}+{user['login']}@users.noreply.github.com")
     init_repo(destination)
     config = load_config(destination)
     github = config["github"]
@@ -117,7 +132,7 @@ def prepare_repository(
         codex = shutil.which("codex") or codex
     configure_review(destination, test_commands=commands, codex_command=codex)
     install_skill(scope="repo", repo=destination)
-    report = doctor_report(destination)
+    report = doctor_report(destination, runner=lambda command, cwd: _safe_doctor_runner(destination, command, cwd))
     return {
         "repository": slug, "directory": str(destination), "reused": reused,
         "repository_prepared": True, "test_commands": commands,

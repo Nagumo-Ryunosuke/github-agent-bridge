@@ -29,7 +29,7 @@ class InstallStep:
 
 
 def _run(command: list[str], capture: bool = True) -> subprocess.CompletedProcess[str]:
-    kwargs: dict[str, Any] = {"text": True}
+    kwargs: dict[str, Any] = {"text": True, "encoding": "utf-8"}
     if capture:
         kwargs.update(stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return subprocess.run(command, **kwargs)

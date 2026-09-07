@@ -91,7 +91,7 @@ class ConnectCase(unittest.TestCase):
     def test_python_tests_use_worktree_source(self):
         (self.source / "src").mkdir()
         (self.source / "tests").mkdir()
-        (self.source / "tests/test_real.py").write_text("import unittest\n", encoding="utf-8")
+        (self.source / "tests/test_real.py").write_text("import unittest\nclass TestCase(unittest.TestCase):\n    def test_real(self): pass\n", encoding="utf-8")
         command = infer_tests(self.source)[0]
         self.assertIn("PYTHONPATH=src", command)
         self.assertIn("unittest discover", command)
