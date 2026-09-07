@@ -10,7 +10,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional, Union
 
 Runner = Callable[[list[str], Optional[Path]], subprocess.CompletedProcess[str]]
 Which = Callable[[str], Optional[str]]
@@ -47,7 +47,7 @@ def service_state_dir(
 ) -> Path:
     platform_name = platform_name or sys.platform
     home = home or Path.home()
-    return _state_root(platform_name, home, env or os.environ) / service_slug(repo)
+    return _state_root(platform_name, home, os.environ if env is None else env) / service_slug(repo)
 
 
 def _uid_value(uid: Optional[int]) -> int:
@@ -100,14 +100,77 @@ def _launchd_plist(repo: Path, python_executable: str, label: str, log_dir: Path
     }, fmt=plistlib.FMT_XML, sort_keys=True)
 
 
-def _windows_wrapper(repo: Path, python_executable: str, log_dir: Path) -> str:
-    return "\r\n".join([
-        "@echo off",
-        "setlocal",
-        f'cd /d "{repo.resolve()}"',
-        f'"{python_executable}" -m github_agent_bridge.cli watch >> "{log_dir / "watch.log"}" 2>> "{log_dir / "watch.err.log"}"',
+def _python_string(value: Union[str, Path]) -> str:
+    return json.dumps(str(value), ensure_ascii=True)
+
+
+def _windows_import_code(repo: Path) -> str:
+    source_root = repo.resolve() / "src"
+    return "".join([
+        "import sys;",
+        f"sys.path.insert(0,{_python_string(source_root)});",
+        "import github_agent_bridge.cli",
+    ])
+
+
+def _windows_watch_code(repo: Path) -> str:
+    source_root = repo.resolve() / "src"
+    return "".join([
+        "import runpy,sys;",
+        f"sys.path.insert(0,{_python_string(source_root)});",
+        "sys.argv=['github_agent_bridge.cli','watch'];",
+        "runpy.run_module('github_agent_bridge.cli',run_name='__main__')",
+    ])
+
+
+def _windows_launcher(repo: Path, python_executable: str, log_dir: Path) -> str:
+    repo = repo.resolve()
+    command = [python_executable, "-E", "-X", "utf8", "-u", "-c", _windows_watch_code(repo)]
+    return "\n".join([
+        "from __future__ import annotations",
+        "import os",
+        "import subprocess",
+        "from pathlib import Path",
+        "",
+        f"REPOSITORY = Path({_python_string(repo)})",
+        f"LOG_DIR = Path({_python_string(log_dir)})",
+        f"COMMAND = {json.dumps(command, ensure_ascii=True)}",
+        "LOG_DIR.mkdir(parents=True, exist_ok=True)",
+        "environment = os.environ.copy()",
+        "with (LOG_DIR / 'watch.log').open('ab') as stdout, (LOG_DIR / 'watch.err.log').open('ab') as stderr:",
+        "    raise SystemExit(subprocess.call(COMMAND, cwd=str(REPOSITORY), env=environment, stdout=stdout, stderr=stderr))",
         "",
     ])
+
+
+def _windows_task_action(python_executable: str, launcher: Path) -> str:
+    return subprocess.list2cmdline([python_executable, "-E", "-X", "utf8", str(launcher)])
+
+
+def _command_detail(proc: subprocess.CompletedProcess[str]) -> str:
+    parts = [part.strip() for part in (proc.stderr, proc.stdout) if part and part.strip()]
+    return "\n".join(parts)
+
+
+def _windows_create_error(proc: subprocess.CompletedProcess[str], label: str) -> ServiceError:
+    detail = _command_detail(proc) or "no diagnostic output"
+    normalized = detail.casefold()
+    code = proc.returncode & 0xFFFFFFFF
+    access_denied = (
+        code in {5, 0x80070005}
+        or "access is denied" in normalized
+        or "access denied" in normalized
+        or "拒绝访问" in detail
+        or "访问被拒绝" in detail
+    )
+    if access_denied:
+        return ServiceError(
+            f"Windows Task Scheduler denied creation of '{label}'. "
+            "Run the service install command from an Administrator terminal. "
+            "`/RL LIMITED` controls the task's run level after registration; it does not grant permission to create the task. "
+            f"schtasks: {detail}"
+        )
+    return ServiceError(f"failed to create Windows scheduled task '{label}': {detail}")
 
 
 def detect_service_backend(
@@ -165,7 +228,7 @@ def service_paths(
         definition = home / "Library" / "LaunchAgents" / f"{label}.plist"
     elif backend == "windows-task":
         label = f"GitHubAgentBridge-{slug}"
-        definition = state_dir / "watch.cmd"
+        definition = state_dir / "watch.py"
     else:
         raise ServiceError(f"unsupported service backend: {backend}")
     return ServicePaths(backend, slug, state_dir, definition, label)
@@ -173,6 +236,16 @@ def service_paths(
 
 def _manifest_path(paths: ServicePaths) -> Path:
     return paths.state_dir / "service.json"
+
+
+def _legacy_windows_definition(paths: ServicePaths) -> Path:
+    return paths.state_dir / "watch.cmd"
+
+
+def _definition_exists(paths: ServicePaths) -> bool:
+    if paths.definition.exists():
+        return True
+    return paths.backend == "windows-task" and _legacy_windows_definition(paths).exists()
 
 
 def _read_manifest(state_dir: Path) -> Optional[dict[str, Any]]:
@@ -199,10 +272,20 @@ def _write_manifest(paths: ServicePaths, repo: Path, python_executable: str) -> 
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def _validate_python(repo: Path, python_executable: str, runner: Runner) -> None:
-    proc = runner([python_executable, "-c", "import github_agent_bridge"], repo)
+def _validate_python(
+    repo: Path,
+    python_executable: str,
+    runner: Runner,
+    *,
+    platform_name: Optional[str] = None,
+) -> None:
+    if (platform_name or sys.platform).startswith("win"):
+        cmd = [python_executable, "-E", "-X", "utf8", "-c", _windows_import_code(repo)]
+    else:
+        cmd = [python_executable, "-c", "import github_agent_bridge"]
+    proc = runner(cmd, repo)
     if proc.returncode != 0:
-        detail = proc.stderr.strip() or proc.stdout.strip() or "import failed"
+        detail = _command_detail(proc) or "import failed"
         raise ServiceError(f"watcher Python cannot import github_agent_bridge: {python_executable}: {detail}")
 
 
@@ -221,9 +304,9 @@ def install_service(
 ) -> dict[str, Any]:
     platform_name = platform_name or sys.platform
     home = home or Path.home()
-    env = env or os.environ
+    env = os.environ if env is None else env
     python_executable = python_executable or sys.executable
-    _validate_python(repo, python_executable, runner)
+    _validate_python(repo, python_executable, runner, platform_name=platform_name)
     if backend == "auto":
         backend = detect_service_backend(repo, platform_name=platform_name, runner=runner, which=which)
     paths = service_paths(repo, backend, platform_name=platform_name, home=home, env=env)
@@ -255,18 +338,21 @@ def install_service(
             if proc.returncode != 0:
                 raise ServiceError(proc.stderr.strip() or "failed to start launchd agent")
     elif backend == "windows-task":
-        paths.definition.write_bytes(_windows_wrapper(repo, python_executable, paths.state_dir).encode("utf-8"))
+        paths.definition.write_bytes(_windows_launcher(repo, python_executable, paths.state_dir).encode("ascii"))
         tool = which("schtasks") or which("schtasks.exe") or "schtasks.exe"
         proc = runner([
-            tool, "/Create", "/TN", paths.label, "/TR", str(paths.definition),
-            "/SC", "ONLOGON", "/RL", "LIMITED", "/F",
+            tool, "/Create", "/TN", paths.label,
+            "/TR", _windows_task_action(python_executable, paths.definition),
+            "/SC", "ONLOGON", "/RL", "LIMITED", "/F", "/HRESULT",
         ], repo)
         if proc.returncode != 0:
-            raise ServiceError(proc.stderr.strip() or "failed to create Windows scheduled task")
+            raise _windows_create_error(proc, paths.label)
+        _legacy_windows_definition(paths).unlink(missing_ok=True)
         if start:
             proc = runner([tool, "/Run", "/TN", paths.label], repo)
             if proc.returncode != 0:
-                raise ServiceError(proc.stderr.strip() or "failed to start Windows scheduled task")
+                detail = _command_detail(proc) or "failed to start Windows scheduled task"
+                raise ServiceError(detail)
     else:
         raise ServiceError(f"unsupported service backend: {backend}")
 
@@ -290,7 +376,7 @@ def service_status(
 ) -> dict[str, Any]:
     platform_name = platform_name or sys.platform
     home = home or Path.home()
-    env = env or os.environ
+    env = os.environ if env is None else env
     state_dir = service_state_dir(repo, platform_name=platform_name, home=home, env=env)
     manifest = _read_manifest(state_dir)
     if backend == "auto":
@@ -300,7 +386,7 @@ def service_status(
             else detect_service_backend(repo, platform_name=platform_name, runner=runner, which=which)
         )
     paths = service_paths(repo, backend, platform_name=platform_name, home=home, env=env)
-    installed = bool(manifest and paths.definition.exists())
+    installed = bool(manifest and _definition_exists(paths))
     active: Optional[bool] = None
     detail = "not installed"
 
@@ -400,6 +486,7 @@ def uninstall_service(
         runner([tool, "/End", "/TN", paths.label], repo)
         runner([tool, "/Delete", "/TN", paths.label, "/F"], repo)
         paths.definition.unlink(missing_ok=True)
+        _legacy_windows_definition(paths).unlink(missing_ok=True)
     else:
         raise ServiceError(f"unsupported service backend: {backend}")
 

@@ -11,6 +11,7 @@ from github_agent_bridge.service import (
     install_service,
     restart_service,
     service_slug,
+    service_status,
     uninstall_service,
 )
 from github_agent_bridge.skill_install import SkillInstallError, install_skill, skill_status, uninstall_skill
@@ -116,26 +117,193 @@ class ServiceCase(unittest.TestCase):
             platform_name="win32",
             home=self.home,
             env=env,
-            python_executable="C:/Python/python.exe",
+            python_executable="C:/Program Files/Python/python.exe",
             runner=runner,
             which=which_windows,
         )
         self.assertTrue(status["installed"])
         self.assertIsNone(status["active"])
         self.assertNotIn("\\", status["label"])
-        wrapper = Path(status["definition"]).read_text(encoding="utf-8")
-        self.assertIn("cd /d", wrapper)
-        self.assertIn("github_agent_bridge.cli watch", wrapper)
-        self.assertTrue(any("/Create" in call for call in runner.calls))
-        self.assertTrue(any("/RL" in call and "LIMITED" in call for call in runner.calls))
+        launcher_path = Path(status["definition"])
+        launcher = launcher_path.read_text(encoding="ascii")
+        self.assertTrue(launcher.isascii())
+        self.assertIn("github_agent_bridge.cli", launcher)
+        self.assertIn("sys.path.insert", launcher)
+        create = next(call for call in runner.calls if "/Create" in call)
+        action = create[create.index("/TR") + 1]
+        self.assertIn('"C:/Program Files/Python/python.exe"', action)
+        self.assertIn("-E", action)
+        self.assertIn("-X utf8", action)
+        self.assertIn(str(launcher_path), action)
+        self.assertIn("/RL", create)
+        self.assertIn("LIMITED", create)
+        self.assertIn("/HRESULT", create)
+
+    def test_windows_validation_is_self_contained_and_does_not_persist_install_env(self) -> None:
+        runner = FakeRunner()
+        env = {
+            "LOCALAPPDATA": str(self.root / "Local"),
+            "PYTHONPATH": "C:/temporary/source",
+            "GH_TOKEN": "do-not-write-this",
+        }
+        status = install_service(
+            self.repo,
+            platform_name="win32",
+            home=self.home,
+            env=env,
+            python_executable="C:/Python/python.exe",
+            start=False,
+            runner=runner,
+            which=which_windows,
+        )
+        validation = runner.calls[0]
+        self.assertEqual(["-E", "-X", "utf8", "-c"], validation[1:5])
+        self.assertIn("sys.path.insert(0,", validation[-1])
+        self.assertIn("src", validation[-1])
+        self.assertIn("import github_agent_bridge.cli", validation[-1])
+        self.assertNotIn("PYTHONPATH", validation[-1])
+        launcher = Path(status["definition"]).read_text(encoding="ascii")
+        self.assertNotIn("temporary/source", launcher)
+        self.assertNotIn("do-not-write-this", launcher)
+        self.assertFalse(any("/Run" in call for call in runner.calls))
+
+    def test_windows_unicode_paths_generate_ascii_launcher(self) -> None:
+        repo = self.root / "项目 仓库"
+        repo.mkdir()
+        env = {"LOCALAPPDATA": str(self.root / "用户数据" / "Local")}
+        runner = FakeRunner()
+        status = install_service(
+            repo,
+            platform_name="win32",
+            home=self.home,
+            env=env,
+            python_executable="C:/用户/Python/python.exe",
+            start=False,
+            runner=runner,
+            which=which_windows,
+        )
+        launcher_path = Path(status["definition"])
+        launcher = launcher_path.read_text(encoding="ascii")
+        self.assertTrue(launcher.isascii())
+        compile(launcher, str(launcher_path), "exec")
+        self.assertIn("\\u", launcher)
+        create = next(call for call in runner.calls if "/Create" in call)
+        action = create[create.index("/TR") + 1]
+        self.assertIn("C:/用户/Python/python.exe", action)
+        self.assertIn(str(launcher_path), action)
+
+    def test_windows_empty_env_uses_home_localappdata_fallback(self) -> None:
+        runner = FakeRunner()
+        status = install_service(
+            self.repo,
+            platform_name="win32",
+            home=self.home,
+            env={},
+            python_executable="C:/Python/python.exe",
+            start=False,
+            runner=runner,
+            which=which_windows,
+        )
+        self.assertTrue(str(status["state_dir"]).startswith(str(self.home / "AppData" / "Local")))
+
+    def test_windows_legacy_cmd_definition_is_recognized_and_removed(self) -> None:
+        runner = FakeRunner()
+        env = {"LOCALAPPDATA": str(self.root / "Local")}
+        status = install_service(
+            self.repo,
+            platform_name="win32",
+            home=self.home,
+            env=env,
+            python_executable="C:/Python/python.exe",
+            start=False,
+            runner=runner,
+            which=which_windows,
+        )
+        definition = Path(status["definition"])
+        legacy = definition.with_name("watch.cmd")
+        definition.rename(legacy)
+        legacy_status = service_status(
+            self.repo, platform_name="win32", home=self.home, env=env, runner=runner, which=which_windows
+        )
+        self.assertTrue(legacy_status["installed"])
+        uninstall_service(
+            self.repo, platform_name="win32", home=self.home, env=env, runner=runner, which=which_windows
+        )
+        self.assertFalse(legacy.exists())
+
+    def test_windows_create_access_denied_is_actionable(self) -> None:
+        class DeniedRunner(FakeRunner):
+            def __call__(self, cmd: list[str], cwd=None) -> subprocess.CompletedProcess[str]:
+                self.calls.append(list(cmd))
+                if "/Create" in cmd:
+                    return subprocess.CompletedProcess(cmd, 0x80070005, "", "ERROR: Access is denied.")
+                return subprocess.CompletedProcess(cmd, 0, "ok", "")
+
+        runner = DeniedRunner()
+        with self.assertRaises(ServiceError) as raised:
+            install_service(
+                self.repo,
+                platform_name="win32",
+                home=self.home,
+                env={"LOCALAPPDATA": str(self.root / "Local")},
+                python_executable="C:/Python/python.exe",
+                runner=runner,
+                which=which_windows,
+            )
+        message = str(raised.exception)
+        self.assertIn("Administrator terminal", message)
+        self.assertIn("/RL LIMITED", message)
+        self.assertIn("Access is denied", message)
+        self.assertFalse(any("/Run" in call for call in runner.calls))
+
+    def test_windows_create_access_denied_chinese_is_actionable(self) -> None:
+        class DeniedRunner(FakeRunner):
+            def __call__(self, cmd: list[str], cwd=None) -> subprocess.CompletedProcess[str]:
+                self.calls.append(list(cmd))
+                if "/Create" in cmd:
+                    return subprocess.CompletedProcess(cmd, 1, "错误: 拒绝访问。", "")
+                return subprocess.CompletedProcess(cmd, 0, "ok", "")
+
+        with self.assertRaisesRegex(ServiceError, "Administrator terminal"):
+            install_service(
+                self.repo,
+                platform_name="win32",
+                home=self.home,
+                env={"LOCALAPPDATA": str(self.root / "Local")},
+                python_executable="C:/Python/python.exe",
+                runner=DeniedRunner(),
+                which=which_windows,
+            )
+
+    def test_windows_create_other_failure_preserves_detail(self) -> None:
+        class FailedRunner(FakeRunner):
+            def __call__(self, cmd: list[str], cwd=None) -> subprocess.CompletedProcess[str]:
+                self.calls.append(list(cmd))
+                if "/Create" in cmd:
+                    return subprocess.CompletedProcess(cmd, 2, "scheduler detail", "")
+                return subprocess.CompletedProcess(cmd, 0, "ok", "")
+
+        with self.assertRaises(ServiceError) as raised:
+            install_service(
+                self.repo,
+                platform_name="win32",
+                home=self.home,
+                env={"LOCALAPPDATA": str(self.root / "Local")},
+                python_executable="C:/Python/python.exe",
+                runner=FailedRunner(),
+                which=which_windows,
+            )
+        self.assertIn("scheduler detail", str(raised.exception))
+        self.assertNotIn("Administrator terminal", str(raised.exception))
 
     def test_service_validates_background_python(self) -> None:
         class BadRunner(FakeRunner):
             def __call__(self, cmd: list[str], cwd=None) -> subprocess.CompletedProcess[str]:
                 self.calls.append(list(cmd))
-                if "import github_agent_bridge" in cmd:
+                if any("import github_agent_bridge" in arg for arg in cmd):
                     return subprocess.CompletedProcess(cmd, 1, "", "missing")
                 return subprocess.CompletedProcess(cmd, 0, "ok", "")
+        runner = BadRunner()
         with self.assertRaises(ServiceError):
             install_service(
                 self.repo,
@@ -143,9 +311,10 @@ class ServiceCase(unittest.TestCase):
                 home=self.home,
                 env={},
                 python_executable="/bad/python",
-                runner=BadRunner(),
+                runner=runner,
                 which=which_linux,
             )
+        self.assertFalse(any("daemon-reload" in call for call in runner.calls))
 
 
 class SkillInstallCase(unittest.TestCase):
