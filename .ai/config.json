@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "workflow": {
+    "dispatcher": "codex",
+    "developer": "chatgpt",
+    "reviewer": "codex",
+    "human_merge_required": true,
+    "chatgpt_self_review": true
+  },
+  "github": {
+    "mode": "readonly",
+    "repositories": [
+      "Nagumo-Ryunosuke/github-agent-bridge"
+    ],
+    "managed": {
+      "connection_name": null,
+      "write_confirmed": false,
+      "unattended_confirmed": false
+    },
+    "custom_mcp": {
+      "server_name": null,
+      "write_confirmed": false,
+      "unattended_confirmed": false
+    }
+  },
+  "automation": {
+    "work_trigger": "github-pr",
+    "work_trigger_confirmed": false,
+    "work_trigger_repositories": [],
+    "watch_interval_seconds": 30,
+    "implementation_marker": "agent-bridge:implementation",
+    "implementation_branch_prefix": "ai/",
+    "task_marker": "agent-bridge:task"
+  },
+  "review": {
+    "test_commands": [
+      "set \"PYTHONPATH=src\" && python -m unittest discover -s tests -v"
+    ],
+    "codex_command": "C:\\Users\\zheng\\AppData\\Roaming\\npm\\codex.CMD",
+    "timeout_seconds": 1800,
+    "require_tests_for_approval": true
+  }
+}
