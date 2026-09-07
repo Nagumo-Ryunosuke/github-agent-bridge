@@ -6,13 +6,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from github_agent_bridge.config import configure_writer
 from github_agent_bridge.core import create_task, init_repo
 from github_agent_bridge.publisher import PublishError, _create_or_reuse_task_pr
 from github_agent_bridge.reviewer import ReviewExecutionError, ReviewResult, ensure_base_is_ancestor
 from github_agent_bridge.security import scan_text, validate_ai_tree
 from github_agent_bridge.triggers import (
     build_chatgpt_work_prompt,
+    build_work_automation_setup,
     codex_review_marker,
     implementation_marker,
     parse_codex_review_marker,
@@ -52,16 +52,32 @@ class AutomationCase(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             codex_review_marker(self.task_id, "MAYBE", "abcdef1")
 
-    def test_work_prompt_reports_readonly_gap(self) -> None:
+    def test_work_prompt_is_broker_only(self) -> None:
         text = build_chatgpt_work_prompt(self.repo, self.task_id)
-        self.assertIn("not write-ready", text)
-        self.assertIn("Do not pretend to push", text)
+        self.assertIn("bounded ChatGPT Work event broker", text)
+        self.assertIn("not the primary developer", text)
+        self.assertIn("Do not edit repository files", text)
+        self.assertIn("Do not create, invoke, or delegate to another Work task", text)
+        self.assertIn("explicit user approval", text)
+        self.assertIn("intended model/reasoning level", text)
+        self.assertIn("normal ChatGPT Web Chat", text)
+        self.assertIn("Stop. Do not perform implementation work", text)
 
-    def test_work_prompt_reports_managed_writer(self) -> None:
-        configure_writer(self.repo, mode="managed", connection_name="writer", write_confirmed=True, unattended_confirmed=True)
-        text = build_chatgpt_work_prompt(self.repo, self.task_id)
-        self.assertIn("write-ready", text)
-        self.assertIn("Unattended writes are confirmed", text)
+    def test_revision_work_prompt_stays_broker_only(self) -> None:
+        text = build_chatgpt_work_prompt(self.repo, self.task_id, phase="fix")
+        self.assertIn("latest Codex findings", text)
+        self.assertIn("reviewed head SHA", text)
+        self.assertIn("Do not edit repository files", text)
+        self.assertIn("normal ChatGPT Web Chat", text)
+
+    def test_work_setup_requires_model_and_user_gate(self) -> None:
+        text = build_work_automation_setup(self.repo)
+        self.assertIn("RESOURCE / MODEL GATE", text)
+        self.assertIn("obtain explicit approval", text)
+        self.assertIn("least costly model/reasoning level", text)
+        self.assertIn("platform default Work model", text)
+        self.assertIn("must never invoke Work automatically", text)
+        self.assertIn("brokers only", text)
 
     def test_writer_contract_forbids_merge(self) -> None:
         contract = writer_contract()

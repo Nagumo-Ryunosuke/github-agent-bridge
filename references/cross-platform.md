@@ -1,6 +1,6 @@
 # Cross-platform Codex App / CLI setup
 
-`github-agent-bridge` separates **Skill discovery** from the **persistent local reviewer**, while giving both a single cross-platform bootstrap path.
+`github-agent-bridge` separates **Skill discovery** from the **persistent local reviewer**, while giving both a single cross-platform bootstrap path. Primary development stays in a normal ChatGPT Web Chat; optional Work event automation is broker-only.
 
 ## Recommended first install
 
@@ -20,7 +20,7 @@ curl -fsSL https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridg
 
 The Unix installer is POSIX-sh compatible and does not require Bash.
 
-The bootstrap displays one consolidated machine-change confirmation, creates a private user virtual environment, installs/updates the bridge and shared Skill, detects missing local tooling, installs supported dependencies, then starts missing GitHub/Codex login flows in the system default browser (usually Chrome on Windows).
+The bootstrap displays one consolidated machine-change confirmation, creates a private user virtual environment, installs/updates the bridge and shared Skill, detects missing local tooling, installs supported dependencies, then starts missing GitHub/Codex login flows in the system default browser.
 
 Authentication and elevation are not bypassed. `sudo`, `gh auth login`, `codex login`, GitHub write confirmation and unattended-write confirmation remain user-controlled security boundaries.
 
@@ -46,7 +46,7 @@ agent-bridge env status --skip-codex
 agent-bridge env install --skip-codex
 ```
 
-This is not full zero-touch readiness because the persistent reviewer invokes `codex exec --ephemeral`.
+This is not full reviewer readiness because the persistent reviewer invokes `codex exec --ephemeral`.
 
 ## Shared Skill discovery
 
@@ -112,6 +112,12 @@ agent-bridge service uninstall
 
 The service uses the Python interpreter that executed `agent-bridge service install` and each repository gets a distinct service identity derived from its resolved local path.
 
+## Optional Work event brokers
+
+Work event triggers are optional. If enabled, they may only parse GitHub events and prepare compact handoffs for the normal ChatGPT Web Chat. Before creating a persistent broker, the user must approve the intended model/reasoning level; if the platform does not expose model selection, disclose the platform default before enabling it.
+
+A normal Chat must never invoke Work automatically. Any separate ad-hoc Work delegation requires a fresh explanation of the capability gap/bounded operation plus explicit user and model/reasoning approval.
+
 ## Runtime truth
 
 Service-manager state alone is not enough. The final readiness source of truth is:
@@ -120,4 +126,4 @@ Service-manager state alone is not enough. The final readiness source of truth i
 agent-bridge doctor
 ```
 
-`Zero-touch ready: YES` requires the local executables/authentication, repository access, writer scope, Work triggers, test policy and a fresh long-running watcher heartbeat to all be ready.
+`Zero-touch ready: YES` requires the local executables/authentication, repository access, writer scope, optional broker-trigger confirmation, test policy and a fresh long-running watcher heartbeat to all be ready. It does not authorize primary Work implementation or remove the normal Chat development step.

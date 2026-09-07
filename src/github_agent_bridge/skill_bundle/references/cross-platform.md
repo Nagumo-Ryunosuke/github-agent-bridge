@@ -1,6 +1,6 @@
 # Cross-platform Codex operation
 
-`github-agent-bridge` keeps Skill discovery and the persistent reviewer portable across Codex Desktop/App, Codex CLI and IDE clients.
+`github-agent-bridge` keeps Skill discovery and the persistent reviewer portable across Codex Desktop/App, Codex CLI and IDE clients. Primary development stays in a normal ChatGPT Web Chat; optional Work event automation is broker-only.
 
 ## One-command first install
 
@@ -44,7 +44,7 @@ For an intentional Desktop-only dispatch setup where background Codex review is 
 agent-bridge env status --skip-codex
 ```
 
-Do not describe this as full zero-touch readiness: the persistent reviewer invokes `codex exec --ephemeral` and therefore requires Codex CLI.
+Do not describe this as full reviewer readiness: the persistent reviewer invokes `codex exec --ephemeral` and therefore requires Codex CLI.
 
 ## Shared Skill root
 
@@ -84,4 +84,10 @@ agent-bridge service uninstall
 
 The service uses the same Python interpreter that installed it and each repository gets an independent service identity.
 
-`agent-bridge doctor` is the final runtime source of truth because it checks executable/authentication readiness and the watcher's Git-private heartbeat in addition to repository configuration.
+## Work resource boundary
+
+A normal ChatGPT Web Chat must never invoke Work automatically. Any ad-hoc Work use requires a fresh explanation of the capability gap and bounded operation, explicit user approval, and model/reasoning approval when selectable. If model selection is unavailable, disclose the platform default Work model before proceeding.
+
+Persistent GitHub event-triggered Work tasks, when enabled, are broker-only. Obtain the user's model/reasoning approval when the trigger is created and prefer the least costly option capable of reliable event parsing/handoff. Brokers must not perform primary development work.
+
+`agent-bridge doctor` is the final runtime source of truth because it checks executable/authentication readiness and the watcher's Git-private heartbeat in addition to repository configuration. Its Work-trigger readiness refers only to optional broker automation, not permission for Work to implement.
