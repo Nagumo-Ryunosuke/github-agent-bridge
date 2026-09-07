@@ -18,6 +18,7 @@ from .dependencies import (
     login_environment,
 )
 from .git import GitError, repo_root
+from .connect import check_destination, destination_for, normalize_remote, prepare_repository
 from .service import ServiceError, install_service, restart_service, service_status, uninstall_service
 from .skill_install import SkillInstallError, install_skill, skill_status, uninstall_skill
 
@@ -31,10 +32,12 @@ def _root_help() -> str:
     return (
         legacy
         + "\n\nCross-platform Codex commands:\n"
+        + "  connect   Prepare a repository from a GitHub remote URL and resume setup\n"
         + "  env       Check/install Git, GitHub CLI and Codex CLI prerequisites\n"
         + "  skill     Install/status/uninstall the Skill for Codex App, CLI and IDE\n"
         + "  service   Install/status/restart/uninstall the persistent local reviewer\n\n"
         + "Examples:\n"
+        + "  agent-bridge connect https://github.com/OWNER/REPO.git\n"
         + "  agent-bridge env status\n"
         + "  agent-bridge env install\n"
         + "  agent-bridge skill install --scope user\n"
@@ -209,7 +212,65 @@ def _env_main(argv: list[str]) -> int:
     binaries_ready = bool(final["git"].get("available") and final["gh"].get("available"))
     if include_codex:
         binaries_ready = binaries_ready and bool(final["codex"].get("available"))
-    return 0 if binaries_ready else 1
+    ready = binaries_ready if args.skip_login else final["unattended_review_ready" if include_codex else "dispatch_ready"]
+    return 0 if ready else 1
+
+
+def _connect_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="agent-bridge connect", description="Prepare or resume a GitHub repository using only its remote URL")
+    parser.add_argument("remote")
+    parser.add_argument("--directory", help="Use this checkout instead of the managed per-user location")
+    parser.add_argument("--yes", action="store_true", help="Authorize dependency installation, local checkout and bridge configuration")
+    parser.add_argument("--skip-install", action="store_true", help="Use existing tools without installing dependencies")
+    parser.add_argument("--skip-login", action="store_true", help="Do not open interactive login flows")
+    parser.add_argument("--no-service", action="store_true", help="Do not install a watcher even if cloud prerequisites are confirmed")
+    parser.add_argument("--test-command", action="append", dest="test_commands")
+    parser.add_argument("--json", action="store_true", dest="json_output")
+    args = parser.parse_args(argv)
+    slug, _ = normalize_remote(args.remote)
+    destination = destination_for(slug, args.directory)
+    check_destination(destination, slug)
+    if not args.yes:
+        plan = {"repository": slug, "directory": str(destination), "confirmation_required": True}
+        if args.json_output:
+            print(json.dumps(plan, ensure_ascii=False, indent=2))
+            return 2
+        print(f"Prepare {slug} at {destination}; install missing tools, request login, and configure the local bridge. Cloud write permissions are verified separately.")
+        if not sys.stdin.isatty():
+            print("No interactive terminal. Rerun with --yes after authorizing this setup.", file=sys.stderr)
+            return 2
+        if input("Proceed? [y/N] ").strip().lower() not in {"y", "yes"}:
+            return 2
+    if not args.skip_install:
+        env_args = ["install", "--yes"]
+        if args.skip_login:
+            env_args.append("--skip-login")
+        # Keep machine-readable connect output free of dependency status text.
+        import contextlib
+        with contextlib.redirect_stdout(sys.stderr):
+            if _env_main(env_args) != 0:
+                return 2
+    elif not args.skip_login:
+        login_environment()
+    environment = detect_environment()
+    if not environment["dispatch_ready"]:
+        print("Git and authenticated GitHub CLI are required. Run agent-bridge env install, then repeat this connect command.", file=sys.stderr)
+        return 2
+    result = prepare_repository(args.remote, directory=str(destination), test_commands=args.test_commands)
+    pending = result["pending"]
+    if not args.no_service and pending and all(c["name"] == "codex_watcher" for c in pending):
+        result["service"] = install_service(destination)
+        # Heartbeat may arrive after the command returns. Do not claim immediate readiness.
+    if args.json_output:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(f"Repository prepared: {result['directory']}")
+        print(f"Full unattended loop ready: {'YES' if result['zero_touch_ready'] else 'NO'}")
+        print("Open this directory in Codex and use $github-agent-bridge with your requirement.")
+        for check in pending:
+            print(f"Pending {check['name']}: {check['remediation']}")
+        print("Repeat the same connect command after authorization to resume; existing work is preserved.")
+    return 0
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -220,12 +281,14 @@ def main(argv: Optional[list[str]] = None) -> int:
             return 0
         if args[0] == "env":
             return _env_main(args[1:])
+        if args[0] == "connect":
+            return _connect_main(args[1:])
         if args[0] == "service":
             return _service_main(args[1:])
         if args[0] == "skill":
             return _skill_main(args[1:])
         return legacy_main(args)
-    except (RuntimeError, GitError, ServiceError, SkillInstallError, DependencyInstallError, ValueError) as exc:
+    except (RuntimeError, GitError, ServiceError, SkillInstallError, DependencyInstallError, ValueError, OSError, EOFError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

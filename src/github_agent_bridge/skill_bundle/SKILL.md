@@ -19,13 +19,14 @@ This Skill is designed for Codex App/Desktop, Codex CLI and Codex IDE surfaces o
 When the Skill is invoked, do not make the user manually install each dependency one by one.
 
 1. Try `agent-bridge env status` first.
-2. If `agent-bridge` itself is unavailable, detect the local OS and offer **one consolidated installation confirmation**:
+2. If the user provides a GitHub remote URL and `agent-bridge` is available, run `agent-bridge connect <REMOTE_URL>` first. It validates access, clones or resumes the checkout, initializes `.ai/`, infers tests, and installs the repository Skill.
+3. If `agent-bridge` itself is unavailable, detect the local OS and offer **one consolidated installation confirmation**:
    - Linux/macOS: `curl -fsSL https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.sh | sh`
    - Windows PowerShell: `irm https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.ps1 | iex`
-3. Explain the machine changes before execution. After the user approves, run the bootstrap command instead of giving a long manual checklist.
-4. If `agent-bridge` exists but Git, GitHub CLI or Codex CLI/authentication is incomplete, show the plan from `agent-bridge env install` and ask for one consolidated approval. After approval, run `agent-bridge env install --yes`.
-5. Never bypass OS elevation, GitHub authorization, or ChatGPT/Codex login. `sudo`, `gh auth login`, and `codex login` remain user-controlled interactive security boundaries.
-6. Re-run `agent-bridge env status` after installation. Do not claim readiness from an install command alone.
+4. Explain the machine changes before execution. After the user approves, run the bootstrap command instead of giving a long manual checklist.
+5. If `agent-bridge` exists but Git, GitHub CLI or Codex CLI/authentication is incomplete, show the plan from `agent-bridge env install` and ask for one consolidated approval. After approval, run `agent-bridge env install --yes`.
+6. Never bypass OS elevation, GitHub authorization, or ChatGPT/Codex login. `sudo`, `gh auth login`, and `codex login` remain user-controlled interactive security boundaries.
+7. Re-run `agent-bridge env status` after installation. Do not claim readiness from an install command alone.
 
 The installer is architecture-neutral: it detects OS/CPU and delegates binaries to native package managers or the official OpenAI Codex installer. Full unattended review is only possible on platforms for which upstream GitHub CLI and Codex CLI builds/packages exist. On an unsupported CPU/OS, report the exact missing upstream capability instead of pretending the deployment succeeded.
 
@@ -40,7 +41,7 @@ Codex App/Desktop can discover and use the same Skill from `$HOME/.agents/skills
 1. Work from the real target repository.
 2. Run `agent-bridge env status`; self-bootstrap missing local prerequisites as described above.
 3. Run `agent-bridge doctor`.
-4. If repository setup is incomplete, inspect the repository and infer a real authoritative test command from its existing tooling, then prefer `agent-bridge setup bootstrap` over asking the user to edit `.ai/config.json` manually.
+4. If the user supplied a GitHub remote URL, use `agent-bridge connect <REMOTE_URL>`; otherwise, if repository setup is incomplete, inspect the repository and infer a real authoritative test command from its existing tooling, then prefer `agent-bridge setup bootstrap` over asking the user to edit `.ai/config.json` manually.
 5. Ask only for genuinely security-sensitive attestations that cannot be inferred, such as confirming a tested write-capable GitHub connection or unattended-write policy. Never fabricate `--confirm-write`, `--confirm-unattended`, or Work-trigger confirmation.
 6. If the watcher service is missing, install it with `agent-bridge service install` after local prerequisites are ready.
 7. Never claim zero-touch readiness unless `agent-bridge doctor` reports `Zero-touch ready: YES`.

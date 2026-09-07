@@ -21,13 +21,14 @@ The user should be able to read the README, run one bootstrap command, then use 
 When this Skill is invoked:
 
 1. Try `agent-bridge env status` first.
-2. If `agent-bridge` is not installed, detect the operating system and offer **one consolidated installation confirmation**. After approval, run the appropriate one-command bootstrap:
+2. If the user provides a GitHub remote URL and `agent-bridge` is available, run `agent-bridge connect <REMOTE_URL>` first. It validates access, clones or resumes the checkout, initializes `.ai/`, infers tests, and installs the repository Skill.
+3. If `agent-bridge` is not installed, detect the operating system and offer **one consolidated installation confirmation**. After approval, run the appropriate one-command bootstrap:
    - Linux/macOS: `curl -fsSL https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.sh | sh`
    - Windows PowerShell: `irm https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.ps1 | iex`
-3. If `agent-bridge` exists but local dependencies are incomplete, show the installation plan produced by `agent-bridge env install`, ask once, then run `agent-bridge env install --yes` after approval.
-4. Do not ask separately for every package. Consolidate non-sensitive machine changes into one approval whenever possible.
-5. Do not bypass security boundaries. OS elevation (`sudo`/installer elevation), GitHub authorization (`gh auth login`) and ChatGPT/Codex account login (`codex login`) remain interactive user actions.
-6. Re-run `agent-bridge env status` after changes. Installation success is not equivalent to authentication/readiness.
+4. If `agent-bridge` exists but local dependencies are incomplete, show the installation plan produced by `agent-bridge env install`, ask once, then run `agent-bridge env install --yes` after approval.
+5. Do not ask separately for every package. Consolidate non-sensitive machine changes into one approval whenever possible.
+6. Do not bypass security boundaries. OS elevation (`sudo`/installer elevation), GitHub authorization (`gh auth login`) and ChatGPT/Codex account login (`codex login`) remain interactive user actions.
+7. Re-run `agent-bridge env status` after changes. Installation success is not equivalent to authentication/readiness.
 
 The bootstrap is deliberately architecture-neutral: Python code does not hard-code x86 paths, Linux uses the detected distribution package manager, Windows uses WinGet, macOS uses native tooling/Homebrew when necessary, and Codex CLI is installed using OpenAI's architecture-aware official installer. Full automation still depends on upstream GitHub CLI and Codex CLI availability for the actual OS/CPU. If an upstream binary/package does not exist for a platform, report that boundary precisely and retain whatever Skill/dispatch functionality is available.
 
@@ -53,7 +54,7 @@ Read `references/cross-platform.md` for OS-specific service behavior.
 
 1. Inspect the real local repository, relevant instructions, tests, architecture, and constraints.
 2. Run `agent-bridge env status`. If local prerequisites are incomplete, follow the self-bootstrap protocol above instead of giving a manual dependency checklist.
-3. If the bridge has not been configured for this repository, inspect the existing project tooling and infer a real authoritative test command, then prefer `agent-bridge setup bootstrap` over asking the user to edit `.ai/config.json` manually.
+3. If the user supplied a GitHub remote URL, use `agent-bridge connect <REMOTE_URL>`; otherwise, if the bridge has not been configured for this repository, inspect the existing project tooling and infer a real authoritative test command, then prefer `agent-bridge setup bootstrap` over asking the user to edit `.ai/config.json` manually.
 4. Run `agent-bridge doctor`. Treat `zero_touch_ready=false` as a setup/capability issue; do not claim the unattended loop is operational until critical checks pass.
 5. Ask only for genuinely non-inferable security attestations. Never fabricate `--confirm-write`, `--confirm-unattended`, or Work-trigger confirmation.
 6. Summarize the task into a narrow implementable contract; do not spend tokens implementing the full change yet.

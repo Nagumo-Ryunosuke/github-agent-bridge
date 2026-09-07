@@ -59,6 +59,14 @@ Then open any target Git repository and say:
 
 > 使用 `$github-agent-bridge`，为“我的需求”创建并发布任务，由 ChatGPT 实现，Codex 本地测试和审查，最后由我合并。
 
+仅有 GitHub remote URL 时，安装 CLI 后可直接接入仓库：
+
+```bash
+agent-bridge connect https://github.com/OWNER/REPO.git
+```
+
+该命令会验证当前 GitHub 账号的仓库写权限，克隆或恢复本地 checkout，初始化 `.ai/`、识别测试命令并安装仓库级 Skill。重复执行会保留已有代码和桥接状态；URL 中不允许凭据，仓库不允许写入时会在克隆前停止。
+
 ## What happens automatically when the Skill is used
 
 The installed Skill follows a self-bootstrap contract:

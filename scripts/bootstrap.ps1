@@ -1,4 +1,6 @@
 param(
+    [string]$RemoteUrl = $env:AGENT_BRIDGE_REMOTE,
+    [string]$PackageSource,
     [switch]$Yes,
     [switch]$SkipCodex,
     [switch]$SkipLogin
@@ -8,6 +10,7 @@ $ErrorActionPreference = 'Stop'
 $Repo = 'Nagumo-Ryunosuke/github-agent-bridge'
 $Ref = if ($env:AGENT_BRIDGE_REF) { $env:AGENT_BRIDGE_REF } else { 'main' }
 $ArchiveUrl = "https://github.com/$Repo/archive/refs/heads/$Ref.zip"
+if ($PackageSource) { $ArchiveUrl = $PackageSource }
 $StateRoot = Join-Path $env:LOCALAPPDATA 'github-agent-bridge'
 $Venv = Join-Path $StateRoot 'venv'
 $BinDir = Join-Path $StateRoot 'bin'
@@ -102,8 +105,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Failed to install github-agent-bridge.' }
 $venvBridge = Join-Path $Venv 'Scripts\agent-bridge.exe'
 if (-not (Test-Path $venvBridge)) { throw "agent-bridge executable was not created at $venvBridge" }
 
-$cmdContent = "@echo off`r`n`"$venvBridge`" %*`r`n"
-Set-Content -Path $BridgeCmd -Value $cmdContent -Encoding Ascii
+$cmdContent = "@echo off`r`nchcp 65001 >nul`r`nset PYTHONUTF8=1`r`n`"$venvBridge`" %*`r`n"
+[IO.File]::WriteAllText($BridgeCmd, $cmdContent, [Text.UTF8Encoding]::new($false))
 
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $parts = @($userPath -split ';' | Where-Object { $_ })
@@ -117,14 +120,23 @@ Write-Step 'Installing the shared Codex Skill'
 & $venvBridge skill install --scope user
 if ($LASTEXITCODE -ne 0) { throw 'Skill installation failed.' }
 
-$args = @('env', 'install', '--yes')
-if ($SkipCodex) { $args += '--skip-codex' }
-if ($SkipLogin) { $args += '--skip-login' }
+$bridgeArgs = @('env', 'install', '--yes')
+if ($SkipCodex) { $bridgeArgs += '--skip-codex' }
+if ($SkipLogin) { $bridgeArgs += '--skip-login' }
 
 Write-Step 'Installing/checking external prerequisites'
-& $venvBridge @args
+& $venvBridge @bridgeArgs
 if ($LASTEXITCODE -ne 0) {
     throw 'External prerequisite setup did not complete. Rerun `agent-bridge env install` after fixing the reported item.'
+}
+
+if ($RemoteUrl) {
+    Write-Step 'Preparing the target repository'
+    $connectArgs = @('connect', $RemoteUrl, '--yes', '--skip-install', '--skip-login')
+    & $venvBridge @connectArgs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Repository setup needs authorization. After login, resume with: agent-bridge connect $RemoteUrl"
+    }
 }
 
 Write-Host @"

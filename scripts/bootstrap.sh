@@ -10,6 +10,7 @@ BIN_DIR="$HOME/.local/bin"
 YES=0
 SKIP_CODEX=0
 SKIP_LOGIN=0
+REMOTE_URL="${AGENT_BRIDGE_REMOTE:-}"
 TTY_DEVICE=""
 
 if ( : <>/dev/tty ) 2>/dev/null; then
@@ -18,7 +19,7 @@ fi
 
 usage() {
   cat <<'EOF'
-Usage: bootstrap.sh [--yes] [--skip-codex] [--skip-login]
+Usage: bootstrap.sh [--yes] [--skip-codex] [--skip-login] [--remote URL]
 
 One-command installer for github-agent-bridge on Linux/macOS.
 This script is POSIX-sh compatible so it does not require bash on minimal Linux systems.
@@ -29,6 +30,7 @@ This script is POSIX-sh compatible so it does not require bash on minimal Linux 
 
 Environment:
   AGENT_BRIDGE_REF=<branch>  Install a repository branch instead of main.
+  AGENT_BRIDGE_REMOTE=<url>  Prepare this GitHub repository after installation.
 EOF
 }
 
@@ -37,6 +39,9 @@ while [ "$#" -gt 0 ]; do
     --yes|-y) YES=1 ;;
     --skip-codex) SKIP_CODEX=1 ;;
     --skip-login) SKIP_LOGIN=1 ;;
+    --remote)
+      [ "$#" -ge 2 ] || { echo '--remote requires a URL' >&2; exit 2; }
+      REMOTE_URL="$2"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -113,7 +118,7 @@ install_python_linux() {
 }
 
 ensure_venv_support_linux() {
-  if python3 -m venv --help >/dev/null 2>&1; then
+  if python3 -c 'import venv, ensurepip' >/dev/null 2>&1; then
     return
   fi
   say "Installing Python venv support"
@@ -125,7 +130,7 @@ ensure_venv_support_linux() {
     echo "Python is present but the venv module is unavailable. Install the distribution's Python venv package." >&2
     exit 1
   fi
-  if ! python3 -m venv --help >/dev/null 2>&1; then
+  if ! python3 -c 'import venv, ensurepip' >/dev/null 2>&1; then
     echo "Python venv support is still unavailable after package installation." >&2
     exit 1
   fi
@@ -214,6 +219,13 @@ if [ -n "$TTY_DEVICE" ]; then
   "$VENV/bin/agent-bridge" "$@" <"$TTY_DEVICE"
 else
   "$VENV/bin/agent-bridge" "$@"
+fi
+
+if [ -n "$REMOTE_URL" ]; then
+  say "Preparing the target repository"
+  if ! "$VENV/bin/agent-bridge" connect "$REMOTE_URL" --yes --skip-install --skip-login; then
+    printf 'Repository setup needs authorization. After login, resume with: agent-bridge connect %s\n' "$REMOTE_URL" >&2
+  fi
 fi
 
 cat <<EOF
