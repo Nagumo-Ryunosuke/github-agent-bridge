@@ -5,7 +5,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -127,9 +126,9 @@ def prepare_repository(
     github = config["github"]
     configure_writer(destination, mode=github["mode"], repositories=[slug])
     commands = test_commands if test_commands is not None else config["review"]["test_commands"] or infer_tests(destination)
+    # Persist the logical command name so the configuration remains portable;
+    # the local doctor resolves it through PATH on each machine.
     codex = config["review"].get("codex_command", "codex")
-    if codex == "codex":
-        codex = shutil.which("codex") or codex
     configure_review(destination, test_commands=commands, codex_command=codex)
     install_skill(scope="repo", repo=destination)
     report = doctor_report(destination, runner=lambda command, cwd: _safe_doctor_runner(destination, command, cwd))
