@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "tasks": {
+    "TASK-000001": {
+      "task_id": "TASK-000001",
+      "title": "验证网页端协作链路",
+      "status": "ready",
+      "priority": "normal",
+      "assigned_to": "chatgpt",
+      "developer": "chatgpt",
+      "reviewer": "codex",
+      "requested_by": "codex",
+      "base": {
+        "branch": "main",
+        "commit": "d491072ac62fc31457b21dfc31fb38f32ae6a930"
+      },
+      "target_branch": "ai/task-000001",
+      "next_agent": "chatgpt",
+      "created_at": "2026-09-07T14:29:26+00:00",
+      "updated_at": "2026-09-07T14:29:26+00:00",
+      "implementation": null,
+      "review": null,
+      "self_reviewed": false
+    },
+    "TASK-000002": {
+      "task_id": "TASK-000002",
+      "title": "为关键逻辑补充必要中文注释",
+      "status": "ready",
+      "priority": "normal",
+      "assigned_to": "chatgpt",
+      "developer": "chatgpt",
+      "reviewer": "codex",
+      "requested_by": "codex",
+      "base": {
+        "branch": "main",
+        "commit": "a96ff4c417abf246ab69be1749de6a6b5db7c08d"
+      },
+      "target_branch": "ai/task-000002",
+      "next_agent": "chatgpt",
+      "created_at": "2026-09-09T07:33:51+00:00",
+      "updated_at": "2026-09-09T07:33:51+00:00",
+      "implementation": null,
+      "review": null,
+      "self_reviewed": false
+    }
+  }
+}
