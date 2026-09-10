@@ -33,12 +33,14 @@ def _assert_repo_allowed(repo: str) -> None:
 
 
 def _safe_path(path: str) -> str:
+    """把写入限制在仓库相对路径内，阻止绝对路径和目录穿越。"""
     if not isinstance(path, str) or not path or path.startswith("/") or ".." in path.split("/"):
         raise ValueError("path must be a safe repository-relative path")
     return path
 
 
 def _assert_write_branch(branch: str) -> None:
+    """强制所有自动写入落在配置允许的任务分支命名空间。"""
     prefix = os.environ.get("AGENT_BRIDGE_BRANCH_PREFIX", "ai/")
     if not branch or not re.fullmatch(r"[A-Za-z0-9._/-]+", branch):
         raise ValueError("branch contains unsupported characters")
@@ -144,6 +146,7 @@ def commit_files(repo: str, branch: str, files: list[dict[str, Any]], message: s
     """Create one atomic commit containing multiple UTF-8 file writes/deletes."""
     _assert_repo_allowed(repo)
     _assert_write_branch(branch)
+    # 先构造 blob/tree/commit，最后一次性移动 ref，避免多文件更新暴露半成品状态。
     ref = json.loads(_gh("api", _repo_path(repo, f"git/ref/heads/{branch}")))
     parent_sha = ref["object"]["sha"]
     parent = json.loads(_gh("api", _repo_path(repo, f"git/commits/{parent_sha}")))
