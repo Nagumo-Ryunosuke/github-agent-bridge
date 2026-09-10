@@ -98,6 +98,7 @@ def next_task_id(state: dict[str, Any]) -> str:
 
 
 def transition(task: dict[str, Any], new_status: str) -> None:
+    """按显式状态机推进任务，拒绝跳过协议阶段的非法流转。"""
     old_status = task["status"]
     if new_status not in VALID_STATUSES:
         raise RuntimeError(f"unknown status: {new_status}")
@@ -114,6 +115,7 @@ def create_task(repo: Path, *, title: str, objective: str, assigned_to: str, cre
     config = load_config(repo)
     task_id = next_task_id(state)
     branch = base_branch or current_branch(repo)
+    # 任务契约固定到创建时的提交，后续实现和审查不能随分支 HEAD 漂移。
     base_commit = resolve_ref(repo, branch) if branch != "DETACHED" else head_sha(repo)
     created_at = now_iso()
     developer = assigned_to or config["workflow"]["developer"]
