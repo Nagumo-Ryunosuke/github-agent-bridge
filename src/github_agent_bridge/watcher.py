@@ -117,6 +117,7 @@ def review_to_markdown(task_id: str, head_sha: str, result: ReviewResult) -> str
 
 
 def post_review_comment(repo: Path, pr_number: int, body: str) -> None:
+    """按机器标记去重，确保同一提交的审查结论最多发布一次。"""
     marker = parse_codex_review_marker(body)
     if marker:
         existing = subprocess.run(["gh", "pr", "view", str(pr_number), "--json", "comments"], cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -157,6 +158,7 @@ def process_once(
         if not task_id:
             continue
         if pr.get("isCrossRepository"):
+            # 本地测试会执行 PR 代码，跨仓库 head 不进入受信任执行边界。
             head_sha = pr["headRefOid"]
             key = str(pr["number"])
             if state["reviewed_heads"].get(key) != head_sha:

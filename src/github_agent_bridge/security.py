@@ -17,6 +17,7 @@ def scan_text(text: str) -> list[str]:
 
 
 def validate_ai_tree(repo: Path) -> list[str]:
+    """发布前扫描持久协作数据，避免凭据随任务元数据进入 Git。"""
     root = repo / ".ai"
     findings: list[str] = []
     if not root.exists():

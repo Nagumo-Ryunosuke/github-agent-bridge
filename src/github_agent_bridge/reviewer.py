@@ -76,6 +76,7 @@ def ensure_base_is_ancestor(repo: Path, base_commit: str, head_ref: str) -> None
 
 
 def run_test_commands(worktree: Path, commands: list[str], timeout: int) -> list[dict[str, Any]]:
+    """执行仓库配置的权威测试，并限制交给模型的日志体积。"""
     results: list[dict[str, Any]] = []
     for command in commands:
         try:
@@ -132,6 +133,7 @@ def review_pr_head(
     timeout = int(config["review"]["timeout_seconds"])
     ref = f"refs/agent-bridge/pr-{pr_number}"
     run_git(repo, "fetch", "origin", f"+pull/{pr_number}/head:{ref}")
+    # fetch 后再次核对 SHA，避免读取 PR 信息与执行代码之间发生竞态替换。
     resolved = run_git(repo, "rev-parse", ref)
     if resolved != head_sha:
         raise ReviewExecutionError(f"PR head changed during fetch: expected {head_sha}, got {resolved}")

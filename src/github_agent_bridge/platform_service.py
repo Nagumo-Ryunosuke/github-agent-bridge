@@ -200,6 +200,7 @@ def _write_manifest(paths: ServicePaths, repo: Path, python_executable: str) -> 
 
 
 def _validate_python(repo: Path, python_executable: str, runner: Runner) -> None:
+    """在持久化服务定义前确认目标解释器可独立导入 bridge。"""
     proc = runner([python_executable, "-c", "import github_agent_bridge"], repo)
     if proc.returncode != 0:
         detail = proc.stderr.strip() or proc.stdout.strip() or "import failed"
@@ -230,6 +231,7 @@ def install_service(
     paths.state_dir.mkdir(parents=True, exist_ok=True)
 
     if backend == "systemd":
+        # 各后端都使用当前用户级设施；这里不应提升为系统级或管理员服务。
         paths.definition.parent.mkdir(parents=True, exist_ok=True)
         paths.definition.write_text(_systemd_unit(repo, python_executable, paths.state_dir), encoding="utf-8")
         tool = which("systemctl") or "systemctl"
@@ -246,6 +248,7 @@ def install_service(
         tool = which("launchctl") or "launchctl"
         launch_uid = _uid_value(uid)
         target = f"gui/{launch_uid}/{paths.label}"
+        # bootout 用于幂等替换旧定义；服务尚不存在时的失败可安全忽略。
         runner([tool, "bootout", target], repo)
         proc = runner([tool, "bootstrap", f"gui/{launch_uid}", str(paths.definition)], repo)
         if proc.returncode != 0:
