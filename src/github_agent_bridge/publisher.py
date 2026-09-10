@@ -49,6 +49,7 @@ def _verify_remote_task_branch(repo: Path, task_id: str, branch: str, base_sha: 
     remote_sha = remote.split()[0]
     ref = f"refs/agent-bridge/published-{task_id.lower()}"
     run_git(repo, "fetch", "origin", f"+refs/heads/{branch}:{ref}")
+    # 恢复部分失败的发布时，只允许复用相对固定基线包含 .ai 元数据的分支。
     changed = run_git(repo, "diff", "--name-only", f"{base_sha}..{ref}", check=False)
     unsafe = [line for line in changed.splitlines() if line and not line.startswith(".ai/")]
     if unsafe:
