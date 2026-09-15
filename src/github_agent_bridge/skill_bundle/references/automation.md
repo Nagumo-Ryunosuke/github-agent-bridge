@@ -1,20 +1,7 @@
-# Automation loop
+# Ordinary Chat handoff
 
-The intended steady-state loop is:
+The active Codex dispatcher relays requirements and artifacts through the logged-in browser. Ordinary Chat owns design, implementation and review. See [browser-chat.md](browser-chat.md) for the actual transport and verification steps.
 
-```text
-Codex local analysis
-  -> Task contract pinned to exact base SHA
-  -> GitHub Task PR
-  -> ChatGPT Work event trigger
-  -> ChatGPT design + implementation + tests + self-review
-  -> marked Implementation PR
-  -> persistent local Codex watcher
-  -> exact-SHA local tests + structured review
-  -> APPROVE -> human merge
-     REVISE  -> GitHub machine-marked comment -> ChatGPT Work fix -> new head -> Codex re-review
-```
+There is no bundled unattended GitHub-event-to-Chat adapter. Do not create Work tasks, schedules or polling as a substitute. A published Task PR is durable context, not a delivered message. `doctor` remains NO for unattended readiness.
 
-The watcher deduplicates exact PR head SHAs in Git-private state. It does not rely on the current working tree's committed task state when a task contract can be recovered from GitHub refs.
-
-Run `agent-bridge doctor` after initial setup. `Zero-touch ready: YES` is the readiness gate for unattended operation.
+The older Codex watcher remains available only for an explicitly configured `workflow.reviewer=codex`. It refuses to run under the default Chat reviewer and skips tasks assigned to other reviewers. Do not install it for the ordinary Chat workflow.

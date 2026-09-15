@@ -1,3 +1,10 @@
+# 1.6.0 — Ordinary browser Chat routing
+
+- Default Codex to questions/relay with GPT-6 Astra preference; ordinary Chat owns design, implementation and review. App model selection remains external.
+- Add browser handoff packets, exact-head review/fix phases, digest-based retry protection and explicit observed-assistant delivery receipts stored outside tracked files.
+- Reject legacy Work dispatch and default Codex reviewer execution. Add `setup chat` migration and honest browser/unattended readiness diagnostics.
+- Synchronize source/packaged skill instructions and document the missing unattended event adapter and live-browser validation boundary.
+
 # Changelog
 
 ## 1.5.0 - 2026-09-06

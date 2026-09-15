@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from .chat import chat_status, configure_chat, prepare_chat, record_delivery, record_sent, record_result
+
 from .config import (
     bootstrap_config,
     configure_review,
@@ -46,7 +48,7 @@ def _add_writer_confirmation_flags(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="agent-bridge", description="GitHub-native ChatGPT development / Codex review automation")
+    parser = argparse.ArgumentParser(prog="agent-bridge", description="Ordinary Chat design/implementation/review with Codex questions and relay")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("init", help="Initialize .ai collaboration state and config")
@@ -57,13 +59,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     setup = sub.add_parser("setup", help="Configure bridge integrations")
     setup_sub = setup.add_subparsers(dest="setup_command", required=True)
+    chat_setup = setup_sub.add_parser("chat", help="Bind ordinary browser Chat and migrate role routing")
+    chat_setup.add_argument("--url", required=True)
+    chat_setup.add_argument("--model", required=True, help="Model label observed in ordinary Chat; does not change the app model")
 
     bootstrap = setup_sub.add_parser("bootstrap", help="One-shot local setup for the zero-touch workflow")
     bootstrap.add_argument("--mode", choices=["managed", "custom-mcp", "readonly"], help="Defaults to managed on first setup; preserves the current mode on repeated bootstrap")
     bootstrap.add_argument("--connection-name")
     bootstrap.add_argument("--mcp-server")
     _add_writer_confirmation_flags(bootstrap)
-    bootstrap.add_argument("--confirm-work-trigger", action="store_true", help="Record that the two ChatGPT Work GitHub event triggers were created")
+    bootstrap.add_argument("--confirm-work-trigger", action="store_true", help="Deprecated: Work confirmation is rejected; use setup chat")
     bootstrap.add_argument("--repository", action="append", dest="repositories", help="Allowed owner/name repository; defaults to/merges the GitHub origin when detectable")
     bootstrap.add_argument("--test-command", action="append", dest="test_commands", help="Trusted local test command; repeat for multiple commands")
     bootstrap.add_argument("--codex-command")
@@ -87,9 +92,9 @@ def build_parser() -> argparse.ArgumentParser:
     test_policy.add_argument("--require-tests", action="store_true", help="Require at least one configured local test command before APPROVE")
     test_policy.add_argument("--allow-no-tests", action="store_true", help="Allow APPROVE without configured local test commands")
 
-    work_trigger = setup_sub.add_parser("work-trigger", help="Record one-time ChatGPT Work GitHub trigger setup")
+    work_trigger = setup_sub.add_parser("work-trigger", help="Deprecated Work state cleanup (confirmation is disabled)")
     work_trigger_state = work_trigger.add_mutually_exclusive_group(required=True)
-    work_trigger_state.add_argument("--confirm", action="store_true", help="Confirm the two event-triggered Work tasks exist for the configured repository scope")
+    work_trigger_state.add_argument("--confirm", action="store_true", help="Deprecated: rejected to prevent accidental Work routing")
     work_trigger_state.add_argument("--clear", action="store_true", help="Mark Work trigger setup as incomplete")
 
     task = sub.add_parser("task", help="Task operations")
@@ -99,7 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--title", required=True)
     create.add_argument("--objective", required=True)
     create.add_argument("--assigned-to", default="chatgpt")
-    create.add_argument("--reviewer", default="codex")
+    create.add_argument("--reviewer", help="Defaults to workflow.reviewer (ordinary Chat for new configs)")
     create.add_argument("--created-by", default="codex")
     create.add_argument("--priority", default="normal", choices=["low", "normal", "high", "critical"])
     create.add_argument("--base-branch")
@@ -119,7 +124,7 @@ def build_parser() -> argparse.ArgumentParser:
     self_review.add_argument("task_id")
     self_review.add_argument("--agent", default="chatgpt")
 
-    finish = task_sub.add_parser("finish", help="Record implementation handoff to Codex")
+    finish = task_sub.add_parser("finish", help="Record implementation handoff to the assigned reviewer")
     finish.add_argument("task_id")
     finish.add_argument("--commit", dest="implementation_commit", required=True)
     finish.add_argument("--branch", required=True)
@@ -143,17 +148,36 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument("--result", required=True, choices=["approve", "request-changes"])
     review.add_argument("--commit", dest="reviewed_commit", required=True)
     review.add_argument("--summary", required=True)
-    review.add_argument("--reviewer", default="codex")
+    review.add_argument("--reviewer", help="Defaults to the task's assigned reviewer")
 
-    trigger = sub.add_parser("trigger", help="Render GitHub/ChatGPT Work trigger artifacts")
+    chat = sub.add_parser("chat", help="Prepare ordinary Chat packets and record observed browser delivery")
+    chat_sub = chat.add_subparsers(dest="chat_command", required=True)
+    for operation in ("prepare", "status", "sent", "delivered", "result"):
+        command = chat_sub.add_parser(operation)
+        command.add_argument("task_id")
+        command.add_argument("--phase", choices=["design", "implement", "review", "fix"], default="design")
+        if operation == "prepare":
+            command.add_argument("--head", help="Exact PR head SHA, required for review/fix")
+        if operation in {"sent", "delivered"}:
+            command.add_argument("--url", required=True)
+            command.add_argument("--model", required=True)
+            command.add_argument("--surface", required=True, choices=["chat"])
+            if operation == "sent":
+                command.add_argument("--message-file", type=Path, required=True, help="User turn observed in the conversation after submission, UTF-8")
+            else:
+                command.add_argument("--reply-file", type=Path, required=True, help="Observed assistant acknowledgment, UTF-8; never the sent user message")
+        if operation == "result":
+            command.add_argument("--result-file", type=Path, required=True, help="Observed phase result JSON; validated and stored, never executed")
+
+    trigger = sub.add_parser("trigger", help="Render GitHub handoff artifacts")
     trigger_sub = trigger.add_subparsers(dest="trigger_command", required=True)
     task_pr = trigger_sub.add_parser("task-pr", help="Render a task PR body marker")
     task_pr.add_argument("task_id")
     impl_pr = trigger_sub.add_parser("implementation-pr", help="Render an implementation PR body marker")
     impl_pr.add_argument("task_id")
     impl_pr.add_argument("--summary", default="")
-    trigger_sub.add_parser("automation-setup", help="Render one-time ChatGPT Work event-trigger setup instructions")
-    work_prompt = trigger_sub.add_parser("work-prompt", help="Render the ChatGPT Work prompt for implement/fix")
+    trigger_sub.add_parser("automation-setup", help="Render ordinary Chat browser setup instructions")
+    work_prompt = trigger_sub.add_parser("work-prompt", help="Deprecated: fails with ordinary Chat migration instructions")
     work_prompt.add_argument("task_id")
     work_prompt.add_argument("--phase", choices=["implement", "fix"], default="implement")
 
@@ -194,7 +218,7 @@ def cmd_status(repo: Path) -> int:
     print(f"HEAD: {head_sha(repo)}")
     print(f"Roles: dispatcher={config['workflow']['dispatcher']} developer={config['workflow']['developer']} reviewer={config['workflow']['reviewer']}")
     print(f"Writer: mode={writer['mode']} ready={writer['ready']} unattended_ready={writer['unattended_ready']}")
-    print(f"Work trigger confirmed: {bool(config['automation'].get('work_trigger_confirmed'))}")
+    print(f"Ordinary Chat binding: {config['automation']['chat']}; binding is not delivery evidence")
     print("\nTasks:")
     if not state["tasks"]:
         print("  (none)")
@@ -227,6 +251,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                 print(format_doctor_report(report))
             return 0 if report["zero_touch_ready"] else 1
         if args.command == "setup" and args.setup_command == "bootstrap":
+            if args.confirm_work_trigger:
+                raise RuntimeError("Work dispatch is disabled; use setup chat and chat prepare")
             init_repo(repo)
             existing = load_config(repo)
             mode = args.mode or (existing["github"]["mode"] if existing["github"]["mode"] != "readonly" else "managed")
@@ -254,8 +280,30 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(json.dumps({"github": config["github"], "review": config["review"], "automation": config["automation"]}, ensure_ascii=False, indent=2))
             print("\n" + format_doctor_report(report))
             if not config["automation"].get("work_trigger_confirmed"):
-                print("\nOne-time ChatGPT Work setup still required:\n")
+                print("\nOrdinary Chat browser dispatch:\n")
                 print(build_work_automation_setup(repo))
+            return 0
+        if args.command == "setup" and args.setup_command == "chat":
+            config = configure_chat(repo, url=args.url, model=args.model)
+            print(json.dumps(config["automation"]["chat"], ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "chat":
+            if args.chat_command == "prepare":
+                result = prepare_chat(repo, args.task_id, phase=args.phase, head=args.head)
+            elif args.chat_command == "delivered":
+                result = record_delivery(repo, args.task_id, phase=args.phase, url=args.url,
+                                         model=args.model, surface=args.surface,
+                                         reply=args.reply_file.read_text(encoding="utf-8"))
+            elif args.chat_command == "sent":
+                result = record_sent(repo, args.task_id, phase=args.phase, url=args.url,
+                                     model=args.model, surface=args.surface,
+                                     message=args.message_file.read_text(encoding="utf-8"))
+            elif args.chat_command == "result":
+                result = record_result(repo, args.task_id, phase=args.phase,
+                                       result=json.loads(args.result_file.read_text(encoding="utf-8")))
+            else:
+                result = chat_status(repo, args.task_id, args.phase)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         if args.command == "setup" and args.setup_command == "writer":
             config = configure_writer(
@@ -340,7 +388,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(json.dumps(report, ensure_ascii=False, indent=2))
             return 2 if report["drift"] and not report.get("metadata_only") else 0
         if args.command == "review":
-            path = review_task(repo, args.task_id, result=args.result, reviewed_commit=args.reviewed_commit, summary=args.summary, reviewer=args.reviewer)
+            assigned = get_task(repo, args.task_id).get("reviewer") or "chatgpt"
+            path = review_task(repo, args.task_id, result=args.result, reviewed_commit=args.reviewed_commit, summary=args.summary, reviewer=args.reviewer or assigned)
             print(path.relative_to(repo))
             return 0
         if args.command == "trigger":
@@ -371,7 +420,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 return 1
             print("OK: bridge state/config are valid and no obvious secrets were detected in .ai")
             return 0
-    except (RuntimeError, GitError, ValueError) as exc:
+    except (RuntimeError, GitError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     return 0

@@ -17,7 +17,7 @@ Which = Callable[[str], Optional[str]]
 
 
 def _run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return subprocess.run(cmd, cwd=cwd, text=True, encoding="utf-8", errors="replace", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
 def parse_github_remote(url: str) -> Optional[dict[str, str]]:
@@ -150,7 +150,7 @@ def doctor_report(
             "github_origin",
             "pass" if supported_host else "fail",
             f"origin resolves to {host}/{repository}",
-            "GitHub-triggered ChatGPT Work tasks currently require github.com; use github.com or keep this deployment manual/custom",
+            "use a github.com origin for the built-in GitHub transport, or configure a separate custom transport",
         ))
 
     gh_path = which("gh")
@@ -177,6 +177,30 @@ def doctor_report(
         f"GitHub CLI can access {repository}" if repo_access else f"GitHub CLI cannot verify access to {repository or '(unknown repository)'}",
         "grant the authenticated GitHub identity access to this repository and verify with `gh repo view owner/repo`",
     ))
+
+    if config["workflow"].get("reviewer") == "chatgpt":
+        from .chat import chat_url
+        binding = config["automation"]["chat"]
+        try:
+            chat_url(binding.get("url") or "")
+            bound = bool(str(binding.get("model") or "").strip())
+        except (RuntimeError, ValueError):
+            bound = False
+        checks.append(_check("ordinary_chat_binding", "pass" if bound else "fail",
+                             "Chat URL/model recorded; this is not browser delivery evidence" if bound else "ordinary Chat is not bound",
+                             "use the logged-in browser, verify Chat mode/model, then run `agent-bridge setup chat --url ... --model ...`"))
+        isolated = (config["workflow"].get("developer_surface") == "chatgpt-web-chat"
+                    and not config["automation"]["work"].get("automatic_invocation")
+                    and not config["automation"].get("work_trigger_confirmed"))
+        checks.append(_check("work_isolation", "pass" if isolated else "fail",
+                             "Work routing disabled" if isolated else "legacy Work configuration must be cleared",
+                             "run `agent-bridge setup chat --url ... --model ...`; disable previously saved Work tasks in their UI"))
+        checks.append(_check("browser_transport", "fail",
+                             "live ordinary Chat delivery requires the active browser agent; no unattended Chat event adapter is bundled",
+                             "use `chat prepare` and verify the assistant acknowledgment in the browser; do not substitute a Work task or schedule"))
+        return {"schema_version": 1, "zero_touch_ready": False,
+                "repository": repository, "host": host, "writer": detect_writer(repo),
+                "checks": checks, "mode": "ordinary-chat-browser-relay"}
 
     codex_command = str(config["review"].get("codex_command") or "codex")
     codex_path = which(codex_command)
@@ -248,20 +272,11 @@ def doctor_report(
         "rerun bootstrap with `--repository owner/name` (or let bootstrap infer origin)",
     ))
 
-    trigger_confirmed = bool(config["automation"].get("work_trigger_confirmed"))
-    trigger_repositories = list(config["automation"].get("work_trigger_repositories") or [])
-    trigger_scoped = bool(trigger_confirmed and repository and repository in trigger_repositories)
-    if trigger_scoped:
-        trigger_message = f"ChatGPT Work GitHub event triggers are confirmed for {repository}"
-    elif trigger_confirmed:
-        trigger_message = f"Work triggers were confirmed for a different repository scope: {', '.join(trigger_repositories) or '(empty)'}"
-    else:
-        trigger_message = "ChatGPT Work GitHub event triggers have not been confirmed"
     checks.append(_check(
         "chatgpt_work_trigger",
-        "pass" if trigger_scoped else "fail",
-        trigger_message,
-        "create/verify the two Work triggers for this repository, then run `agent-bridge setup work-trigger --confirm`",
+        "fail",
+        "legacy Work triggers cannot satisfy ordinary Chat readiness",
+        "migrate with `agent-bridge setup chat --url ... --model ...`; Work task creation is disabled",
     ))
 
     test_commands = list(config["review"].get("test_commands") or [])

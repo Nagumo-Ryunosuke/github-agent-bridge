@@ -1,119 +1,42 @@
 ---
 name: github-agent-bridge
-description: Coordinate GitHub-mediated development where Codex analyzes and dispatches locally, ChatGPT Web/Work designs and implements, and Codex reviews each implementation PR with real local tests. Use for automated ChatGPT/Codex handoff, Task PR dispatch, exact-SHA review loops, zero-touch setup, or cross-platform Codex App/CLI deployment.
+description: Relay development requests from Codex to ordinary ChatGPT browser Chat for design, implementation and review, with commit-pinned GitHub context and observed delivery receipts. Use for ChatGPT/Codex handoff and diagnosing accidental Work task creation.
 ---
 
 # GitHub Agent Bridge
 
-Use this role split unless the user explicitly overrides it:
+## Role and model routing
 
-- **GitHub**: durable task/context/event transport and exact SHA identity.
-- **ChatGPT Web/Work**: architecture, high-quality reasoning, primary implementation, tests, first self-review.
-- **Codex**: local requirement reconnaissance, task dispatch, second review, real test execution, debugging and verification.
-- **Human**: final merge/acceptance by default.
+- Codex is the requirements interviewer and transport: clarify the objective, collect requested repository context, relay questions/artifacts, and report observed results.
+- Ordinary ChatGPT Web **Chat** owns design, implementation, test design, self-review, independent review and revisions. Preserve the web Chat model selected by the user.
+- The desktop Codex dispatcher preference is GPT-6 Astra (`gpt-6-astra`). A skill and `agents/openai.yaml` cannot change the active model. Verify the app's selector/current task metadata; if unavailable, report that the model choice is unverified. Do not claim the config value selected the model.
+- The human retains the merge decision. Local implementation/review/test execution is allowed only when the user explicitly requests it. Do not silently spend Codex reasoning on the delegated phases.
 
-## Self-bootstrap contract
+These defaults supersede older Work/Codex-review instructions in this package. Preserve an explicit user override.
 
-This Skill is designed for Codex App/Desktop, Codex CLI and Codex IDE surfaces on Windows, Linux and macOS.
+## Prevent the Work routing bug
 
-When the Skill is invoked, do not make the user manually install each dependency one by one.
+Ordinary Chat and ChatGPT Work are different execution surfaces. Writing “use Chat” inside a Work prompt does not change the surface.
 
-1. Try `agent-bridge env status` first.
-2. If the user provides a GitHub remote URL and `agent-bridge` is available, run `agent-bridge connect <REMOTE_URL>` first. It validates access, clones or resumes the checkout, initializes `.ai/`, infers tests, and installs the repository Skill.
-3. If `agent-bridge` itself is unavailable, detect the local OS and offer **one consolidated installation confirmation**:
-   - Linux/macOS: `curl -fsSL https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.sh | sh`
-   - Windows PowerShell: `irm https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.ps1 | iex`
-4. Explain the machine changes before execution. After the user approves, run the bootstrap command instead of giving a long manual checklist.
-5. If `agent-bridge` exists but Git, GitHub CLI or Codex CLI/authentication is incomplete, show the plan from `agent-bridge env install` and ask for one consolidated approval. After approval, run `agent-bridge env install --yes`.
-6. Use the system default browser for authentication (usually Chrome on Windows). GitHub login must use `gh auth login -w`; Codex login opens its OAuth page in the system default browser. Do not route these flows through the Codex in-app browser unless the user explicitly asks.
-7. Never bypass OS elevation, GitHub authorization, or ChatGPT/Codex login. These remain user-controlled interactive security boundaries.
-8. Re-run `agent-bridge env status` after installation. Do not claim readiness from an install command alone.
+**Never use `create_thread` with `target.type=chatgptWorkCloud`, Work automations, Work event triggers, or a Codex child task to implement an ordinary-Chat request.** The app task creation tool's cloud target creates Work; it is not a normal Chat constructor. Do not substitute schedules or polling for a missing event-to-Chat adapter.
 
-The installer is architecture-neutral: it detects OS/CPU and delegates binaries to native package managers or the official OpenAI Codex installer. Full unattended review is only possible on platforms for which upstream GitHub CLI and Codex CLI builds/packages exist. On an unsupported CPU/OS, report the exact missing upstream capability instead of pretending the deployment succeeded.
+Use a connected browser's actual Chat UI. Follow [references/browser-chat.md](references/browser-chat.md) for the transport procedure, capability gaps and receipts. If the user specifies logged-in Chrome, use that connection; Codex's in-app browser is a separate session. Never read cookies or use undocumented ChatGPT backend APIs.
 
-### Desktop-only vs full automation
+## Dispatch and return
 
-Codex App/Desktop can discover and use the same Skill from `$HOME/.agents/skills/github-agent-bridge` without using the terminal UI as the primary interface. However, the persistent background reviewer calls `codex exec --ephemeral`, so **Codex CLI is required for the full zero-touch review loop**, even when the user normally works in Codex Desktop.
+1. Locate the real repository and read its instructions. Preserve unrelated edits. Use the installed CLI, or `PYTHONPATH=src python -m github_agent_bridge` from a source checkout. Run `env status` and `doctor` to collect evidence; a missing Codex CLI/watcher is not a reason to install a reviewer for this workflow.
+2. Create a task containing the user's requirements, pinned base, repository context and acceptance criteria. Use `task create ... --reviewer chatgpt`. The narrow contract must not become a locally authored architecture plan.
+3. Use `chat prepare <TASK> --phase design`, then perform the browser transport. A prepared packet and a published Task PR are not delivery.
+4. Relay Chat's questions to the user. Return answers to the same Chat. When the design is ready, send the `implement` packet to that Chat within the user's authorized task scope.
+5. Chat may commit through its own verified writer. If it only returns a patch, report the capability gap. Apply exactly that patch locally and run supplied test commands only if the user authorized local execution; return failures to Chat for a fix. Never claim that an ordinary Chat inherits Work tools or desktop credentials.
+6. Relay the exact implementation PR head and actual test evidence with `chat prepare <TASK> --phase review --head <40-char-SHA>`. Prefer a separate ordinary review Chat with the complete contract, diff and evidence when the browser supports it; bind that Chat explicitly before preparing its packet. Codex must not author the review findings.
+7. Route REVISE back through the `fix` phase, then review the new exact head. Recheck the live PR head before reporting approval. Keep findings and test limitations intact; never convert unexecuted tests into a pass.
+8. Record the result through the existing `task finish` / `review` state commands after observing the actual Chat output. Use `chat sent` only after the user turn is visible, and `chat result --result-file ...` to validate and persist the completed phase JSON. Resume `sent`/`delivered` phases without resending. A delivery acknowledgment is not an implementation, review approval, or merge.
 
-`agent-bridge env install --skip-codex` is only a dispatch/Desktop fallback and must not be described as full zero-touch readiness.
+## Installation and migration
 
-## Before starting repository work
+The root and packaged `src/github_agent_bridge/skill_bundle` copies must stay synchronized. Upgrade the Python package from the intended branch/commit before `agent-bridge skill install --scope user`; otherwise installation simply restores the old Work instructions. Check `skill status --scope user` and reload the skill in a new app task after upgrade.
 
-1. Work from the real target repository.
-2. Run `agent-bridge env status`; self-bootstrap missing local prerequisites as described above.
-3. Run `agent-bridge doctor`.
-4. If the user supplied a GitHub remote URL, use `agent-bridge connect <REMOTE_URL>`; otherwise, if repository setup is incomplete, inspect the repository and infer a real authoritative test command from its existing tooling, then prefer `agent-bridge setup bootstrap` over asking the user to edit `.ai/config.json` manually.
-5. Ask only for genuinely security-sensitive attestations that cannot be inferred, such as confirming a tested write-capable GitHub connection or unattended-write policy. Never fabricate `--confirm-write`, `--confirm-unattended`, or Work-trigger confirmation.
-6. If the watcher service is missing, install it with `agent-bridge service install` after local prerequisites are ready.
-7. Never claim zero-touch readiness unless `agent-bridge doctor` reports `Zero-touch ready: YES`.
+`setup chat --url <saved-chat-url> --model <observed-web-model-label>` migrates repository routing to ordinary Chat and disables stored Work confirmations. It does not select an app model, create a browser conversation, prove delivery, stop an old watcher process, or delete platform Work tasks. Inspect existing Work tasks and disable them only within the user's authorization. Old tasks that assign Codex review must be recreated with the intended reviewer.
 
-## On a new development request in Codex
-
-1. Inspect the repository, relevant instructions, tests and constraints locally.
-2. If the user supplies a GitHub remote URL, run `agent-bridge connect <REMOTE_URL>` first so the standard `.ai/` bridge files are present.
-3. Do only enough analysis to produce a narrow implementation contract; do not spend Codex usage implementing the full change.
-4. Create a task with ChatGPT as developer and Codex as reviewer.
-5. Check commit drift with `agent-bridge drift <TASK>`.
-6. Validate collaboration state with `agent-bridge validate`.
-7. Dispatch using `agent-bridge publish task <TASK>`.
-8. Stop local implementation and let the GitHub event-triggered ChatGPT Work task take ownership.
-
-## ChatGPT implementation contract
-
-When a marked Task PR wakes ChatGPT:
-
-1. Read `.ai/tasks/<TASK>.md`, repository context/instructions, exact pinned base, and current PR/review state.
-2. Design before editing.
-3. Branch from the exact pinned base commit.
-4. Implement the change and tests.
-5. Self-review the exact diff once and fix obvious issues.
-6. Use the configured managed or MCP writer to create/update the implementation PR.
-7. Put `<!-- agent-bridge:implementation task=TASK-XXXXXX -->` in the PR body.
-8. Never merge the implementation PR.
-9. If writer capability is unavailable, do not pretend to push.
-
-## Codex local review contract
-
-The persistent watcher reviews each eligible implementation PR head SHA once:
-
-- reject cross-repository PRs;
-- enforce the trusted implementation branch prefix;
-- verify the task pinned base is an ancestor of the reviewed head;
-- fetch the exact head into an isolated worktree;
-- run configured authoritative local tests;
-- invoke structured `codex exec --ephemeral` review;
-- treat actual test evidence as authoritative;
-- post a machine-marked `APPROVE` or `REVISE` comment;
-- route `REVISE` back to ChatGPT Work for fixes.
-
-Do not modify ChatGPT's implementation branch during normal review.
-
-## Cross-platform setup
-
-The recommended first-install path is the one-command bootstrap in the self-bootstrap section. If the package is already installed, install/update the Skill with:
-
-`agent-bridge skill install --scope user`
-
-The installer writes real files to `$HOME/.agents/skills/github-agent-bridge`; Codex App/Desktop, CLI and IDE clients share this user-level Skill root. Restart Codex after first installation or Skill upgrade.
-
-Install the persistent watcher with:
-
-`agent-bridge service install`
-
-Auto backend mapping:
-
-- Linux: systemd user service.
-- macOS: launchd LaunchAgent.
-- Windows: per-user Task Scheduler task.
-
-Then run `agent-bridge service status` and `agent-bridge doctor`.
-
-See `references/cross-platform.md` and `references/automation.md` for operational details.
-
-## Safety
-
-- Keep `.env`, tokens, credentials and private keys out of `.ai/`.
-- Keep final merge human-controlled unless the user explicitly changes the policy.
-- Do not grant GitHub admin/secrets/delete permissions just to simplify setup.
-- Local test commands execute implementation PR code; use an appropriate machine/container/VM.
-- Do not hide installation commands or authorization steps from the user. Consolidate prompts, but preserve meaningful consent.
+For fresh deployment, use [references/bootstrap.md](references/bootstrap.md). For writer permissions use [references/writer-modes.md](references/writer-modes.md). Never fabricate writer attestations or copy credentials into `.ai/`.

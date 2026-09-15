@@ -61,7 +61,13 @@ class DoctorCase(unittest.TestCase):
             "work_trigger_confirmed": True,
         }
         kwargs.update(overrides)
+        legacy_confirmed = kwargs.pop("work_trigger_confirmed", False)
         bootstrap_config(self.repo, **kwargs)
+        config = load_config(self.repo)
+        config["workflow"]["reviewer"] = "codex"
+        config["automation"]["work_trigger_confirmed"] = legacy_confirmed
+        config["automation"]["work_trigger_repositories"] = kwargs["repositories"] if legacy_confirmed else []
+        save_config(self.repo, config)
 
     def report(self):
         return doctor_report(self.repo, runner=self.fake_runner, which=self.fake_which, now=NOW)
@@ -81,11 +87,10 @@ class DoctorCase(unittest.TestCase):
         )
         self.assertIsNone(parse_github_remote("not-a-remote"))
 
-    def test_zero_touch_ready_when_all_requirements_are_confirmed(self) -> None:
+    def test_legacy_confirmations_do_not_prove_chat_readiness(self) -> None:
         self.ready_config()
         report = self.report()
-        self.assertTrue(report["zero_touch_ready"])
-        self.assertTrue(all(item["status"] != "fail" for item in report["checks"]))
+        self.assertFalse(report["zero_touch_ready"])
 
     def test_codex_authentication_is_required(self) -> None:
         self.ready_config()
@@ -175,9 +180,10 @@ class DoctorCase(unittest.TestCase):
     def test_work_trigger_confirmation_snapshots_repository_scope(self) -> None:
         self.ready_config()
         configure_work_trigger(self.repo, confirmed=False)
-        configure_work_trigger(self.repo, confirmed=True)
+        with self.assertRaisesRegex(RuntimeError, "Work dispatch is disabled"):
+            configure_work_trigger(self.repo, confirmed=True)
         config = load_config(self.repo)
-        self.assertEqual(["owner/repo"], config["automation"]["work_trigger_repositories"])
+        self.assertFalse(config["automation"]["work_trigger_confirmed"])
 
     def test_writer_mode_change_resets_confirmation(self) -> None:
         self.ready_config()

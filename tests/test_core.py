@@ -61,7 +61,7 @@ class CoreTests(RepoCase):
         self.assertTrue((self.repo / ".ai/state/tasks.json").exists())
         cfg = load_config(self.repo)
         self.assertEqual("chatgpt", cfg["workflow"]["developer"])
-        self.assertEqual("codex", cfg["workflow"]["reviewer"])
+        self.assertEqual("chatgpt", cfg["workflow"]["reviewer"])
 
     def test_task_defaults_to_chatgpt_and_codex(self) -> None:
         tid = self.task()

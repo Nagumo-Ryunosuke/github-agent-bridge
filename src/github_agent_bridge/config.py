@@ -11,8 +11,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "schema_version": 1,
     "workflow": {
         "dispatcher": "codex",
+        "dispatcher_model": "gpt-6-astra",
+        "dispatcher_role": "questions-and-relay",
         "developer": "chatgpt",
-        "reviewer": "codex",
+        "developer_surface": "chatgpt-web-chat",
+        "reviewer": "chatgpt",
         "human_merge_required": True,
         "chatgpt_self_review": True,
     },
@@ -31,6 +34,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         },
     },
     "automation": {
+        "chat": {"url": None, "model": None},
+        "work": {"automatic_invocation": False},
         "work_trigger": "github-pr",
         "work_trigger_confirmed": False,
         "work_trigger_repositories": [],
@@ -177,6 +182,8 @@ def configure_review(
 
 
 def configure_work_trigger(repo: Path, *, confirmed: bool) -> dict[str, Any]:
+    if confirmed:
+        raise RuntimeError("Work dispatch is disabled; use `agent-bridge chat prepare <TASK>` and an ordinary browser Chat")
     config = load_config(repo)
     config["automation"]["work_trigger_confirmed"] = bool(confirmed)
     config["automation"]["work_trigger_repositories"] = list(config["github"].get("repositories") or []) if confirmed else []

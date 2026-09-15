@@ -129,6 +129,8 @@ def review_pr_head(
     command_runner: Callable[[list[str], Path, int], subprocess.CompletedProcess[str]] = _run,
 ) -> ReviewResult:
     config = load_config(repo)
+    if config["workflow"].get("reviewer") != "codex":
+        raise ReviewExecutionError("Codex review is disabled; ordinary Chat owns review")
     timeout = int(config["review"]["timeout_seconds"])
     ref = f"refs/agent-bridge/pr-{pr_number}"
     run_git(repo, "fetch", "origin", f"+pull/{pr_number}/head:{ref}")
