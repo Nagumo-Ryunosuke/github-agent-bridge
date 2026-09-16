@@ -181,7 +181,8 @@ class ChatCase(unittest.TestCase):
         packet = prepare_chat(self.repo, self.task)
         self.deliver(packet)
         for change in ({"digest": "0" * 64}, {"task_id": "TASK-999999"}, {"head": "0" * 40},
-                       {"phase": "review"}, {"content": ""}, {"verdict": "APPROVE"}, {"tests": "passed"}):
+                       {"phase": "review"}, {"content": ""}, {"verdict": "APPROVE"}, {"verdict": []},
+                       {"output_head": "short-sha"}, {"tests": "passed"}):
             with self.subTest(change=change), self.assertRaises(RuntimeError):
                 record_result(self.repo, self.task, phase="design", result=self.result_for(packet, **change))
         self.assertEqual("delivered", chat_status(self.repo, self.task, "design")["status"])
@@ -206,6 +207,86 @@ class ChatCase(unittest.TestCase):
                                 cwd=self.repo, env=env, text=True, encoding="utf-8", capture_output=True)
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("prepared", json.loads(result.stdout)["status"])
+
+    def test_changed_requirements_do_not_reuse_old_design(self):
+        packet = prepare_chat(self.repo, self.task)
+        self.deliver(packet)
+        record_result(self.repo, self.task, phase="design",
+                      result=self.result_for(packet, content="OLD-DESIGN-MUST-NOT-BE-USED"))
+        contract = self.repo / ".ai/tasks" / f"{self.task}.md"
+        contract.write_text(contract.read_text(encoding="utf-8") + "\nNew acceptance requirement", encoding="utf-8")
+        implementation = prepare_chat(self.repo, self.task, phase="implement")
+        self.assertNotIn("OLD-DESIGN-MUST-NOT-BE-USED", implementation["prompt"])
+
+    def test_new_review_head_receives_fix_report_not_initial_implementation(self):
+        old_head, new_head = "a" * 40, "b" * 40
+        implementation = prepare_chat(self.repo, self.task, phase="implement")
+        self.deliver(implementation)
+        record_result(self.repo, self.task, phase="implement", result=self.result_for(
+            implementation, content="OLD-IMPLEMENTATION-REPORT", output_head=old_head))
+        review = prepare_chat(self.repo, self.task, phase="review", head=old_head)
+        self.deliver(review)
+        record_result(self.repo, self.task, phase="review", result=self.result_for(review, verdict="REVISE"))
+        fix = prepare_chat(self.repo, self.task, phase="fix", head=old_head)
+        self.deliver(fix)
+        record_result(self.repo, self.task, phase="fix", result=self.result_for(
+            fix, content="NEW-FIX-REPORT", output_head=new_head))
+        second_review = prepare_chat(self.repo, self.task, phase="review", head=new_head)
+        self.assertIn("NEW-FIX-REPORT", second_review["prompt"])
+        self.assertNotIn("OLD-IMPLEMENTATION-REPORT", second_review["prompt"])
+
+    def test_old_review_findings_do_not_become_fix_instructions_for_another_head(self):
+        review = prepare_chat(self.repo, self.task, phase="review", head="a" * 40)
+        self.deliver(review)
+        record_result(self.repo, self.task, phase="review", result=self.result_for(
+            review, verdict="REVISE", content="OLD-HEAD-FINDINGS"))
+        fix = prepare_chat(self.repo, self.task, phase="fix", head="b" * 40)
+        self.assertNotIn("OLD-HEAD-FINDINGS", fix["prompt"])
+
+    def test_two_real_commits_complete_revision_cycle_and_reject_late_reply(self):
+        from github_agent_bridge.core import claim_task, start_task, mark_self_reviewed, finish_task, review_task, get_task
+        claim_task(self.repo, self.task, "chatgpt")
+        start_task(self.repo, self.task)
+        self.git("switch", "-c", "ai/chat-cycle")
+        (self.repo / "code.txt").write_text("first implementation", encoding="utf-8")
+        self.git("add", "code.txt")
+        self.git("commit", "-m", "implementation")
+        first_head = self.git("rev-parse", "HEAD")
+        mark_self_reviewed(self.repo, self.task)
+        finish_task(self.repo, self.task, implementation_commit=first_head, branch="ai/chat-cycle",
+                    pr=1, summary="First implementation", agent="chatgpt")
+        first_review = prepare_chat(self.repo, self.task, phase="review", head=first_head)
+        self.deliver(first_review)
+        record_result(self.repo, self.task, phase="review", result=self.result_for(first_review, verdict="REVISE"))
+        review_task(self.repo, self.task, result="request-changes", reviewed_commit=first_head,
+                    summary="Revision needed", reviewer="chatgpt")
+        start_task(self.repo, self.task)
+        fix = prepare_chat(self.repo, self.task, phase="fix", head=first_head)
+        self.deliver(fix)
+        (self.repo / "code.txt").write_text("corrected implementation", encoding="utf-8")
+        self.git("add", "code.txt")
+        self.git("commit", "-m", "fix")
+        second_head = self.git("rev-parse", "HEAD")
+        record_result(self.repo, self.task, phase="fix", result=self.result_for(
+            fix, content="Corrected report for the second commit", output_head=second_head))
+        mark_self_reviewed(self.repo, self.task)
+        finish_task(self.repo, self.task, implementation_commit=second_head, branch="ai/chat-cycle",
+                    pr=1, summary="Corrected implementation", agent="chatgpt")
+        review = prepare_chat(self.repo, self.task, phase="review", head=second_head)
+        self.assertIn("Corrected report for the second commit", review["prompt"])
+        with self.assertRaises(RuntimeError):
+            self.deliver(first_review)
+        self.deliver(review)
+        with self.assertRaises(RuntimeError):
+            record_result(self.repo, self.task, phase="review", result=self.result_for(first_review))
+        returned = record_result(self.repo, self.task, phase="review", result=self.result_for(
+            review, tests=[{"command": "fixture-test", "exit_code": 0, "output": "simulated test evidence"}]))
+        # Result import is not approval or merge; those are separate actions.
+        self.assertEqual("review_required", get_task(self.repo, self.task)["status"])
+        self.assertEqual("returned", returned["status"])
+        review_task(self.repo, self.task, result="approve", reviewed_commit=second_head,
+                    summary="Observed Chat approval", reviewer="chatgpt")
+        self.assertEqual("human", get_task(self.repo, self.task)["next_agent"])
 
 
 if __name__ == "__main__":
