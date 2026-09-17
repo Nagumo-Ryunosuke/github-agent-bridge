@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Optional
 
 CONFIG_PATH = Path(".ai/config.json")
+_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_LEGACY_WORK_TRIGGER_KEYS = {
+    "work_trigger",
+    "work_trigger_confirmed",
+    "work_trigger_repositories",
+}
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "schema_version": 1,
@@ -30,10 +37,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "unattended_confirmed": False,
         },
     },
+    "dispatch": {
+        "provider": "openai",
+        "credential_kind": "service-account",
+        "api_base": "https://api.openai.com/v1",
+        "api_key_env": "AGENT_BRIDGE_OPENAI_API_KEY",
+        "model": "gpt-5.6",
+        "mcp_server_url": None,
+        "mcp_token_env": "AGENT_BRIDGE_MCP_TOKEN",
+        "timeout_seconds": 60,
+    },
     "automation": {
-        "work_trigger": "github-pr",
-        "work_trigger_confirmed": False,
-        "work_trigger_repositories": [],
         "watch_interval_seconds": 30,
         "implementation_marker": "agent-bridge:implementation",
         "implementation_branch_prefix": "ai/",
@@ -42,6 +56,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "review": {
         "test_commands": [],
         "codex_command": "codex",
+        "api_key_env": "AGENT_BRIDGE_CODEX_API_KEY",
         "timeout_seconds": 1800,
         "require_tests_for_approval": True,
     },
@@ -58,6 +73,13 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return merged
 
 
+def _validate_env_name(value: str, label: str) -> str:
+    name = value.strip()
+    if not _ENV_NAME_RE.fullmatch(name):
+        raise RuntimeError(f"{label} must be a valid environment variable name")
+    return name
+
+
 def load_config(repo: Path) -> dict[str, Any]:
     path = repo / CONFIG_PATH
     if not path.exists():
@@ -65,6 +87,14 @@ def load_config(repo: Path) -> dict[str, Any]:
     raw = json.loads(path.read_text(encoding="utf-8"))
     if raw.get("schema_version", 1) != 1:
         raise RuntimeError("unsupported .ai/config.json schema_version")
+    automation = raw.get("automation")
+    if isinstance(automation, dict):
+        legacy = sorted(_LEGACY_WORK_TRIGGER_KEYS.intersection(automation))
+        if legacy:
+            raise RuntimeError(
+                "obsolete ChatGPT Work trigger configuration is not supported: "
+                + ", ".join(legacy)
+            )
     return _deep_merge(DEFAULT_CONFIG, raw)
 
 
@@ -109,9 +139,6 @@ def configure_writer(
         normalized = _normalize_repositories(repositories)
         scope_changed = normalized != previous_repositories
         github["repositories"] = normalized
-    if scope_changed:
-        config["automation"]["work_trigger_confirmed"] = False
-        config["automation"]["work_trigger_repositories"] = []
 
     mode_changed = mode != previous_mode
     if mode == "managed":
@@ -150,11 +177,63 @@ def configure_writer(
     return config
 
 
+def configure_dispatch(
+    repo: Path,
+    *,
+    provider: Optional[str] = None,
+    credential_kind: Optional[str] = None,
+    api_base: Optional[str] = None,
+    api_key_env: Optional[str] = None,
+    model: Optional[str] = None,
+    mcp_server_url: Optional[str] = None,
+    mcp_token_env: Optional[str] = None,
+    timeout_seconds: Optional[int] = None,
+) -> dict[str, Any]:
+    config = load_config(repo)
+    dispatch = config["dispatch"]
+
+    if provider is not None:
+        if provider != "openai":
+            raise RuntimeError("dispatch provider must be openai")
+        dispatch["provider"] = provider
+    if credential_kind is not None:
+        if credential_kind not in {"service-account", "workspace-agent"}:
+            raise RuntimeError("credential kind must be service-account or workspace-agent")
+        dispatch["credential_kind"] = credential_kind
+    if api_base is not None:
+        value = api_base.strip().rstrip("/")
+        if not value.startswith("https://"):
+            raise RuntimeError("dispatch API base must use https://")
+        dispatch["api_base"] = value
+    if api_key_env is not None:
+        dispatch["api_key_env"] = _validate_env_name(api_key_env, "dispatch API key env")
+    if model is not None:
+        value = model.strip()
+        if not value:
+            raise RuntimeError("dispatch model must not be empty")
+        dispatch["model"] = value
+    if mcp_server_url is not None:
+        value = mcp_server_url.strip()
+        if not value.startswith("https://"):
+            raise RuntimeError("dispatch MCP server URL must use https://")
+        dispatch["mcp_server_url"] = value
+    if mcp_token_env is not None:
+        dispatch["mcp_token_env"] = _validate_env_name(mcp_token_env, "dispatch MCP token env")
+    if timeout_seconds is not None:
+        if timeout_seconds < 1:
+            raise RuntimeError("dispatch timeout must be positive")
+        dispatch["timeout_seconds"] = timeout_seconds
+
+    save_config(repo, config)
+    return config
+
+
 def configure_review(
     repo: Path,
     *,
     test_commands: Optional[list[str]] = None,
     codex_command: Optional[str] = None,
+    api_key_env: Optional[str] = None,
     timeout_seconds: Optional[int] = None,
     require_tests_for_approval: Optional[bool] = None,
 ) -> dict[str, Any]:
@@ -166,20 +245,14 @@ def configure_review(
         if not codex_command.strip():
             raise RuntimeError("codex command must not be empty")
         review["codex_command"] = codex_command.strip()
+    if api_key_env is not None:
+        review["api_key_env"] = _validate_env_name(api_key_env, "Codex API key env")
     if timeout_seconds is not None:
         if timeout_seconds < 1:
             raise RuntimeError("review timeout must be positive")
         review["timeout_seconds"] = timeout_seconds
     if require_tests_for_approval is not None:
         review["require_tests_for_approval"] = bool(require_tests_for_approval)
-    save_config(repo, config)
-    return config
-
-
-def configure_work_trigger(repo: Path, *, confirmed: bool) -> dict[str, Any]:
-    config = load_config(repo)
-    config["automation"]["work_trigger_confirmed"] = bool(confirmed)
-    config["automation"]["work_trigger_repositories"] = list(config["github"].get("repositories") or []) if confirmed else []
     save_config(repo, config)
     return config
 
@@ -195,9 +268,13 @@ def bootstrap_config(
     unattended_confirmed: Optional[bool] = None,
     test_commands: Optional[list[str]] = None,
     codex_command: Optional[str] = None,
+    codex_api_key_env: Optional[str] = None,
     timeout_seconds: Optional[int] = None,
     require_tests_for_approval: Optional[bool] = None,
-    work_trigger_confirmed: Optional[bool] = None,
+    dispatch_api_key_env: Optional[str] = None,
+    dispatch_model: Optional[str] = None,
+    dispatch_mcp_server_url: Optional[str] = None,
+    dispatch_mcp_token_env: Optional[str] = None,
 ) -> dict[str, Any]:
     configure_writer(
         repo,
@@ -208,13 +285,19 @@ def bootstrap_config(
         unattended_confirmed=unattended_confirmed,
         repositories=repositories,
     )
+    configure_dispatch(
+        repo,
+        api_key_env=dispatch_api_key_env,
+        model=dispatch_model,
+        mcp_server_url=dispatch_mcp_server_url,
+        mcp_token_env=dispatch_mcp_token_env,
+    )
     configure_review(
         repo,
         test_commands=test_commands,
         codex_command=codex_command,
+        api_key_env=codex_api_key_env,
         timeout_seconds=timeout_seconds,
         require_tests_for_approval=require_tests_for_approval,
     )
-    if work_trigger_confirmed is not None:
-        configure_work_trigger(repo, confirmed=work_trigger_confirmed)
     return load_config(repo)
