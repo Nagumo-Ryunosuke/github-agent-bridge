@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "GitHub Agent Bridge Config",
   "type": "object",
-  "required": ["schema_version", "workflow", "github", "automation", "review"],
+  "required": ["schema_version", "workflow", "github", "dispatch", "automation", "review"],
   "properties": {
     "schema_version": {"const": 1},
     "github": {
@@ -17,25 +17,37 @@
         }
       }
     },
+    "dispatch": {
+      "type": "object",
+      "required": ["provider", "credential_kind", "api_base", "api_key_env", "model", "mcp_server_url", "mcp_token_env", "timeout_seconds"],
+      "properties": {
+        "provider": {"const": "openai"},
+        "credential_kind": {"enum": ["service-account", "workspace-agent"]},
+        "api_base": {"type": "string", "pattern": "^https://"},
+        "api_key_env": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+        "model": {"type": "string", "minLength": 1},
+        "mcp_server_url": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^https://"}]},
+        "mcp_token_env": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+        "timeout_seconds": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
     "automation": {
       "type": "object",
       "properties": {
-        "work_trigger": {"const": "github-pr"},
-        "work_trigger_confirmed": {"type": "boolean"},
-        "work_trigger_repositories": {
-          "type": "array",
-          "items": {"type": "string", "pattern": "^[^/]+/[^/]+$"},
-          "uniqueItems": true
-        },
+        "implementation_marker": {"type": "string", "minLength": 1},
+        "task_marker": {"type": "string", "minLength": 1},
         "implementation_branch_prefix": {"type": "string", "minLength": 1},
         "watch_interval_seconds": {"type": "integer", "minimum": 1}
-      }
+      },
+      "additionalProperties": false
     },
     "review": {
       "type": "object",
       "properties": {
         "test_commands": {"type": "array", "items": {"type": "string", "minLength": 1}},
         "codex_command": {"type": "string", "minLength": 1},
+        "api_key_env": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
         "timeout_seconds": {"type": "integer", "minimum": 1},
         "require_tests_for_approval": {"type": "boolean"}
       }
