@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, Optional
 
 from .config import load_config
 from .git import run_git
@@ -48,18 +49,24 @@ class ReviewResult:
                 raise ReviewExecutionError("finding requires title and detail")
 
 
-def _run(cmd: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+def _run(
+    cmd: list[str],
+    cwd: Path,
+    timeout: int,
+    env: Mapping[str, str],
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        cmd,
+        cwd=cwd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        env=dict(env),
+    )
 
 
 def ensure_base_is_ancestor(repo: Path, base_commit: str, head_ref: str) -> None:
-    """Reject implementation heads that are not descendants of the pinned task base.
-
-    The local reviewer executes PR code, so the branch-prefix and same-repository
-    checks in the watcher are not sufficient by themselves. The implementation
-    must also preserve the exact task ancestry contract before any PR test command
-    or Codex tool is executed.
-    """
     proc = subprocess.run(
         ["git", "merge-base", "--is-ancestor", base_commit, head_ref],
         cwd=repo,
@@ -79,7 +86,15 @@ def run_test_commands(worktree: Path, commands: list[str], timeout: int) -> list
     results: list[dict[str, Any]] = []
     for command in commands:
         try:
-            proc = subprocess.run(command, cwd=worktree, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
+            proc = subprocess.run(
+                command,
+                cwd=worktree,
+                shell=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=timeout,
+            )
             results.append({"command": command, "exit_code": proc.returncode, "output": proc.stdout[-8000:]})
         except subprocess.TimeoutExpired as exc:
             output = exc.stdout or ""
@@ -93,7 +108,7 @@ def build_review_prompt(task_id: str, base_commit: str, test_results: list[dict[
     test_text = json.dumps(test_results, ensure_ascii=False, indent=2)
     return f"""Review implementation for {task_id} at the current HEAD against base commit {base_commit}.
 
-You are the second-stage reviewer. ChatGPT already planned, implemented, and self-reviewed. Your job is adversarial verification on a real local checkout.
+You are the second-stage reviewer. The implementation agent already planned, implemented, and self-reviewed. Your job is adversarial verification on a real local checkout.
 
 Inspect the exact diff `{base_commit}...HEAD`, relevant surrounding code, and tests. Focus on correctness, regressions, security, data integrity, concurrency, compatibility, error handling, and missing tests. Do not modify files.
 
@@ -119,6 +134,17 @@ def _parse_last_message(path: Path, test_results: list[dict[str, Any]]) -> Revie
     return result
 
 
+def _review_environment(config: dict[str, Any], environ: Mapping[str, str]) -> dict[str, str]:
+    env_name = str(config["review"].get("api_key_env") or "")
+    api_key = environ.get(env_name, "").strip()
+    if not api_key:
+        raise ReviewExecutionError(f"Codex service credential is missing; set environment variable {env_name}")
+    child_env = dict(environ)
+    # Codex CLI reads OPENAI_API_KEY. The repository stores only the source env name.
+    child_env["OPENAI_API_KEY"] = api_key
+    return child_env
+
+
 def review_pr_head(
     repo: Path,
     *,
@@ -126,10 +152,16 @@ def review_pr_head(
     pr_number: int,
     head_sha: str,
     base_commit: str,
-    command_runner: Callable[[list[str], Path, int], subprocess.CompletedProcess[str]] = _run,
+    command_runner: Callable[
+        [list[str], Path, int, Mapping[str, str]],
+        subprocess.CompletedProcess[str],
+    ] = _run,
+    environ: Optional[Mapping[str, str]] = None,
 ) -> ReviewResult:
     config = load_config(repo)
     timeout = int(config["review"]["timeout_seconds"])
+    child_env = _review_environment(config, os.environ if environ is None else environ)
+
     ref = f"refs/agent-bridge/pr-{pr_number}"
     run_git(repo, "fetch", "origin", f"+pull/{pr_number}/head:{ref}")
     resolved = run_git(repo, "rev-parse", ref)
@@ -147,28 +179,43 @@ def review_pr_head(
             last_message = Path(tmp) / "codex-review.json"
             prompt = build_review_prompt(task_id, base_commit, tests)
             cmd = [
-                str(config["review"]["codex_command"]), "exec", "--ephemeral",
-                "--output-schema", str(schema), "--output-last-message", str(last_message), prompt,
+                str(config["review"]["codex_command"]),
+                "exec",
+                "--ephemeral",
+                "--output-schema",
+                str(schema),
+                "--output-last-message",
+                str(last_message),
+                prompt,
             ]
-            proc = command_runner(cmd, worktree, timeout)
+            proc = command_runner(cmd, worktree, timeout, child_env)
             if proc.returncode != 0:
-                raise ReviewExecutionError(f"codex exec failed ({proc.returncode}): {proc.stderr[-4000:]}")
+                raise ReviewExecutionError(
+                    f"codex exec failed ({proc.returncode}); inspect local reviewer logs without printing credentials"
+                )
             result = _parse_last_message(last_message, tests)
-            # Local execution is authoritative. Missing required tests or any test failure prevents approval.
-            if not tests and bool(config["review"].get("require_tests_for_approval", True)) and result.verdict == "APPROVE":
+            if (
+                not tests
+                and bool(config["review"].get("require_tests_for_approval", True))
+                and result.verdict == "APPROVE"
+            ):
                 result.verdict = "REVISE"
-                result.findings.append({
-                    "severity": "major",
-                    "title": "No local test commands configured",
-                    "detail": "Configure `.ai/config.json` review.test_commands before unattended approval, or explicitly disable require_tests_for_approval.",
-                })
+                result.findings.append(
+                    {
+                        "severity": "major",
+                        "title": "No local test commands configured",
+                        "detail": "Configure `.ai/config.json` review.test_commands before unattended approval, or explicitly disable require_tests_for_approval.",
+                    }
+                )
             if any(item["exit_code"] != 0 for item in tests) and result.verdict == "APPROVE":
                 result.verdict = "REVISE"
-                result.findings.append({
-                    "severity": "major",
-                    "title": "Local validation failed",
-                    "detail": "At least one configured local test command failed; the implementation cannot be approved.",
-                })
+                result.findings.append(
+                    {
+                        "severity": "major",
+                        "title": "Local validation failed",
+                        "detail": "At least one configured local test command failed; the implementation cannot be approved.",
+                    }
+                )
             return result
         finally:
             run_git(repo, "worktree", "remove", "--force", str(worktree), check=False)
