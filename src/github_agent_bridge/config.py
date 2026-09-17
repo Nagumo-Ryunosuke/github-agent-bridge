@@ -30,10 +30,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "unattended_confirmed": False,
         },
     },
+    "dispatch": {
+        "provider": "openai-responses",
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-5.3-codex",
+        "api_key_env": "OPENAI_API_KEY",
+        "project_env": "OPENAI_PROJECT",
+        "github_mcp_server_url": None,
+        "github_mcp_token_env": "AGENT_BRIDGE_GITHUB_MCP_TOKEN",
+        "timeout_seconds": 60,
+    },
     "automation": {
-        "work_trigger": "github-pr",
-        "work_trigger_confirmed": False,
-        "work_trigger_repositories": [],
         "watch_interval_seconds": 30,
         "implementation_marker": "agent-bridge:implementation",
         "implementation_branch_prefix": "ai/",
@@ -42,6 +49,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "review": {
         "test_commands": [],
         "codex_command": "codex",
+        "credential_env": "OPENAI_API_KEY",
         "timeout_seconds": 1800,
         "require_tests_for_approval": True,
     },
@@ -109,9 +117,6 @@ def configure_writer(
         normalized = _normalize_repositories(repositories)
         scope_changed = normalized != previous_repositories
         github["repositories"] = normalized
-    if scope_changed:
-        config["automation"]["work_trigger_confirmed"] = False
-        config["automation"]["work_trigger_repositories"] = []
 
     mode_changed = mode != previous_mode
     if mode == "managed":
@@ -150,11 +155,62 @@ def configure_writer(
     return config
 
 
+def configure_dispatch(
+    repo: Path,
+    *,
+    provider: Optional[str] = None,
+    base_url: Optional[str] = None,
+    model: Optional[str] = None,
+    api_key_env: Optional[str] = None,
+    project_env: Optional[str] = None,
+    github_mcp_server_url: Optional[str] = None,
+    github_mcp_token_env: Optional[str] = None,
+    timeout_seconds: Optional[int] = None,
+) -> dict[str, Any]:
+    config = load_config(repo)
+    dispatch = config["dispatch"]
+    if provider is not None:
+        if provider != "openai-responses":
+            raise RuntimeError("dispatch provider must be openai-responses")
+        dispatch["provider"] = provider
+    if base_url is not None:
+        value = base_url.strip().rstrip("/")
+        if not value.startswith("https://"):
+            raise RuntimeError("dispatch base URL must use https")
+        dispatch["base_url"] = value
+    if model is not None:
+        if not model.strip():
+            raise RuntimeError("dispatch model must not be empty")
+        dispatch["model"] = model.strip()
+    if api_key_env is not None:
+        if not api_key_env.strip():
+            raise RuntimeError("dispatch API key environment variable must not be empty")
+        dispatch["api_key_env"] = api_key_env.strip()
+    if project_env is not None:
+        dispatch["project_env"] = project_env.strip()
+    if github_mcp_server_url is not None:
+        value = github_mcp_server_url.strip()
+        if value and not value.startswith("https://"):
+            raise RuntimeError("GitHub MCP server URL must use https")
+        dispatch["github_mcp_server_url"] = value or None
+    if github_mcp_token_env is not None:
+        if not github_mcp_token_env.strip():
+            raise RuntimeError("GitHub MCP token environment variable must not be empty")
+        dispatch["github_mcp_token_env"] = github_mcp_token_env.strip()
+    if timeout_seconds is not None:
+        if timeout_seconds < 1:
+            raise RuntimeError("dispatch timeout must be positive")
+        dispatch["timeout_seconds"] = timeout_seconds
+    save_config(repo, config)
+    return config
+
+
 def configure_review(
     repo: Path,
     *,
     test_commands: Optional[list[str]] = None,
     codex_command: Optional[str] = None,
+    credential_env: Optional[str] = None,
     timeout_seconds: Optional[int] = None,
     require_tests_for_approval: Optional[bool] = None,
 ) -> dict[str, Any]:
@@ -166,20 +222,16 @@ def configure_review(
         if not codex_command.strip():
             raise RuntimeError("codex command must not be empty")
         review["codex_command"] = codex_command.strip()
+    if credential_env is not None:
+        if not credential_env.strip():
+            raise RuntimeError("review credential environment variable must not be empty")
+        review["credential_env"] = credential_env.strip()
     if timeout_seconds is not None:
         if timeout_seconds < 1:
             raise RuntimeError("review timeout must be positive")
         review["timeout_seconds"] = timeout_seconds
     if require_tests_for_approval is not None:
         review["require_tests_for_approval"] = bool(require_tests_for_approval)
-    save_config(repo, config)
-    return config
-
-
-def configure_work_trigger(repo: Path, *, confirmed: bool) -> dict[str, Any]:
-    config = load_config(repo)
-    config["automation"]["work_trigger_confirmed"] = bool(confirmed)
-    config["automation"]["work_trigger_repositories"] = list(config["github"].get("repositories") or []) if confirmed else []
     save_config(repo, config)
     return config
 
@@ -195,9 +247,9 @@ def bootstrap_config(
     unattended_confirmed: Optional[bool] = None,
     test_commands: Optional[list[str]] = None,
     codex_command: Optional[str] = None,
+    credential_env: Optional[str] = None,
     timeout_seconds: Optional[int] = None,
     require_tests_for_approval: Optional[bool] = None,
-    work_trigger_confirmed: Optional[bool] = None,
 ) -> dict[str, Any]:
     configure_writer(
         repo,
@@ -212,9 +264,8 @@ def bootstrap_config(
         repo,
         test_commands=test_commands,
         codex_command=codex_command,
+        credential_env=credential_env,
         timeout_seconds=timeout_seconds,
         require_tests_for_approval=require_tests_for_approval,
     )
-    if work_trigger_confirmed is not None:
-        configure_work_trigger(repo, confirmed=work_trigger_confirmed)
     return load_config(repo)
