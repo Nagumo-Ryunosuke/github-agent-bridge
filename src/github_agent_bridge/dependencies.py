@@ -7,7 +7,7 @@ import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 
 
 Which = Callable[[str], Optional[str]]
@@ -52,9 +52,12 @@ def detect_environment(
     runner: Runner = _run,
     platform_name: Optional[str] = None,
     machine: Optional[str] = None,
+    environ: Optional[Mapping[str, str]] = None,
+    codex_api_key_env: str = "AGENT_BRIDGE_CODEX_API_KEY",
 ) -> dict[str, Any]:
     system = platform_name or platform.system()
     architecture = machine or platform.machine() or "unknown"
+    env = os.environ if environ is None else environ
     git_path = which("git")
     gh_path = which("gh")
     codex_path = which("codex") if include_codex else None
@@ -64,13 +67,14 @@ def detect_environment(
         proc = runner([gh_path, "auth", "status", "-h", "github.com"], True)
         gh_authenticated = proc.returncode == 0
 
-    codex_authenticated = False
-    if codex_path:
-        proc = runner([codex_path, "login", "status"], True)
-        codex_authenticated = proc.returncode == 0
-
+    codex_service_credential = bool(env.get(codex_api_key_env, "").strip())
     dispatch_ready = bool(git_path and gh_path and gh_authenticated)
-    unattended_review_ready = bool(include_codex and dispatch_ready and codex_path and codex_authenticated)
+    unattended_review_ready = bool(
+        include_codex
+        and dispatch_ready
+        and codex_path
+        and codex_service_credential
+    )
 
     return {
         "platform": system,
@@ -92,7 +96,8 @@ def detect_environment(
             "available": bool(codex_path),
             "path": codex_path,
             "version": _command_version(codex_path, runner),
-            "authenticated": codex_authenticated,
+            "service_credential": codex_service_credential,
+            "api_key_env": codex_api_key_env,
         },
         "dispatch_ready": dispatch_ready,
         "unattended_review_ready": unattended_review_ready,
@@ -293,9 +298,17 @@ def login_environment(
     include_codex: bool = True,
     which: Which = shutil.which,
     runner: Runner = _run,
+    environ: Optional[Mapping[str, str]] = None,
+    codex_api_key_env: str = "AGENT_BRIDGE_CODEX_API_KEY",
 ) -> dict[str, Any]:
     _refresh_process_path()
-    status = detect_environment(include_codex=include_codex, which=which, runner=runner)
+    status = detect_environment(
+        include_codex=include_codex,
+        which=which,
+        runner=runner,
+        environ=environ,
+        codex_api_key_env=codex_api_key_env,
+    )
     gh_path = status["gh"].get("path")
     if gh_path and not status["gh"].get("authenticated"):
         proc = runner([str(gh_path), "auth", "login", "-h", "github.com", "-w"], False)
@@ -303,15 +316,13 @@ def login_environment(
             raise DependencyInstallError(f"`gh auth login` failed with exit code {proc.returncode}")
 
     _refresh_process_path()
-    status = detect_environment(include_codex=include_codex, which=which, runner=runner)
-    codex_path = status["codex"].get("path")
-    if include_codex and codex_path and not status["codex"].get("authenticated"):
-        proc = runner([str(codex_path), "login"], False)
-        if proc.returncode != 0:
-            raise DependencyInstallError(f"`codex login` failed with exit code {proc.returncode}")
-
-    _refresh_process_path()
-    return detect_environment(include_codex=include_codex, which=which, runner=runner)
+    return detect_environment(
+        include_codex=include_codex,
+        which=which,
+        runner=runner,
+        environ=environ,
+        codex_api_key_env=codex_api_key_env,
+    )
 
 
 def format_environment_status(status: dict[str, Any]) -> str:
@@ -323,10 +334,14 @@ def format_environment_status(status: dict[str, Any]) -> str:
     lines.append(f"Git: {mark(bool(status['git']['available']))}")
     lines.append(f"GitHub CLI: {mark(bool(status['gh']['available']))}; authenticated={mark(bool(status['gh']['authenticated']))}")
     if status["codex"].get("required"):
-        lines.append(f"Codex CLI: {mark(bool(status['codex']['available']))}; authenticated={mark(bool(status['codex']['authenticated']))}")
+        lines.append(
+            f"Codex CLI: {mark(bool(status['codex']['available']))}; "
+            f"service_credential={mark(bool(status['codex']['service_credential']))} "
+            f"({status['codex']['api_key_env']})"
+        )
     else:
         lines.append("Codex CLI: optional for dispatch-only desktop mode")
-    lines.append(f"Desktop/interactive dispatch ready: {mark(bool(status['dispatch_ready']))}")
+    lines.append(f"Local GitHub prerequisites ready: {mark(bool(status['dispatch_ready']))}")
     lines.append(f"Unattended local review ready: {mark(bool(status['unattended_review_ready']))}")
     return "\n".join(lines)
 
@@ -343,6 +358,9 @@ def format_install_plan(steps: list[InstallStep], status: dict[str, Any], *, inc
         lines.append("  - no package installation required")
     if not status["gh"].get("authenticated"):
         lines.append("  - start interactive `gh auth login` for github.com")
-    if include_codex and not status["codex"].get("authenticated"):
-        lines.append("  - start interactive `codex login` using the user's ChatGPT account")
+    if include_codex and not status["codex"].get("service_credential"):
+        lines.append(
+            f"  - provide separately billed Codex service credential in {status['codex']['api_key_env']}; "
+            "personal `codex login` is not used for unattended review"
+        )
     return "\n".join(lines)
