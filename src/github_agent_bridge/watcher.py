@@ -8,12 +8,19 @@ from typing import Any, Callable, Optional
 
 from .config import load_config
 from .core import get_task, now_iso
+from .dispatch import dispatch_task
 from .reviewer import ReviewResult, review_pr_head
 from .triggers import codex_review_marker, parse_codex_review_marker, parse_implementation_marker
 
 
 def watcher_state_path(repo: Path) -> Path:
-    proc = subprocess.run(["git", "rev-parse", "--git-path", "agent-bridge/watcher.json"], cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = subprocess.run(
+        ["git", "rev-parse", "--git-path", "agent-bridge/watcher.json"],
+        cwd=repo,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
     if proc.returncode != 0:
         raise RuntimeError(f"cannot resolve git-local watcher state: {proc.stderr.strip()}")
     path = Path(proc.stdout.strip())
@@ -36,7 +43,10 @@ def save_watcher_state(repo: Path, state: dict[str, Any]) -> None:
 def list_implementation_prs(repo: Path) -> list[dict[str, Any]]:
     proc = subprocess.run(
         ["gh", "pr", "list", "--state", "open", "--json", "number,title,body,headRefOid,headRefName,baseRefName,url,isCrossRepository"],
-        cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        cwd=repo,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     if proc.returncode != 0:
         raise RuntimeError(f"gh pr list failed: {proc.stderr.strip()}")
@@ -47,7 +57,10 @@ def list_implementation_prs(repo: Path) -> list[dict[str, Any]]:
 def _task_from_git_ref(repo: Path, ref: str, task_id: str) -> Optional[dict[str, Any]]:
     proc = subprocess.run(
         ["git", "show", f"{ref}:.ai/state/tasks.json"],
-        cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        cwd=repo,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     if proc.returncode != 0:
         return None
@@ -60,13 +73,6 @@ def _task_from_git_ref(repo: Path, ref: str, task_id: str) -> Optional[dict[str,
 
 
 def resolve_task_for_review(repo: Path, task_id: str, base_ref_name: Optional[str] = None) -> dict[str, Any]:
-    """Resolve the durable task contract locally or from GitHub-backed refs.
-
-    The dispatcher may have published the task in a Task PR that is not merged
-    into the reviewer's current checkout. Fall back to the deterministic Task
-    branch, then to the implementation PR base branch, so GitHub remains the
-    source of truth instead of requiring hidden local state.
-    """
     try:
         return get_task(repo, task_id)
     except RuntimeError:
@@ -76,7 +82,10 @@ def resolve_task_for_review(repo: Path, task_id: str, base_ref_name: Optional[st
     task_ref = f"refs/agent-bridge/task-contract-{task_id.lower()}"
     fetch = subprocess.run(
         ["git", "fetch", "origin", f"+refs/heads/{task_branch}:{task_ref}"],
-        cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        cwd=repo,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     if fetch.returncode == 0:
         task = _task_from_git_ref(repo, task_ref, task_id)
@@ -87,7 +96,10 @@ def resolve_task_for_review(repo: Path, task_id: str, base_ref_name: Optional[st
         base_ref = f"refs/agent-bridge/base-{task_id.lower()}"
         fetch = subprocess.run(
             ["git", "fetch", "origin", f"+refs/heads/{base_ref_name}:{base_ref}"],
-            cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cwd=repo,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
         if fetch.returncode == 0:
             task = _task_from_git_ref(repo, base_ref, task_id)
@@ -101,7 +113,18 @@ def resolve_task_for_review(repo: Path, task_id: str, base_ref_name: Optional[st
 
 
 def review_to_markdown(task_id: str, head_sha: str, result: ReviewResult) -> str:
-    lines = [codex_review_marker(task_id, result.verdict, head_sha), "", f"## Codex local review — `{task_id}`", "", f"**Verdict:** `{result.verdict}`", f"**Reviewed head:** `{head_sha}`", "", result.summary, "", "### Findings"]
+    lines = [
+        codex_review_marker(task_id, result.verdict, head_sha),
+        "",
+        f"## Codex local review — `{task_id}`",
+        "",
+        f"**Verdict:** `{result.verdict}`",
+        f"**Reviewed head:** `{head_sha}`",
+        "",
+        result.summary,
+        "",
+        "### Findings",
+    ]
     if result.findings:
         for finding in result.findings:
             lines.append(f"- **{finding['severity'].upper()} — {finding['title']}**: {finding['detail']}")
@@ -119,7 +142,13 @@ def review_to_markdown(task_id: str, head_sha: str, result: ReviewResult) -> str
 def post_review_comment(repo: Path, pr_number: int, body: str) -> None:
     marker = parse_codex_review_marker(body)
     if marker:
-        existing = subprocess.run(["gh", "pr", "view", str(pr_number), "--json", "comments"], cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        existing = subprocess.run(
+            ["gh", "pr", "view", str(pr_number), "--json", "comments"],
+            cwd=repo,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
         if existing.returncode == 0:
             try:
                 comments = json.loads(existing.stdout).get("comments", [])
@@ -129,7 +158,13 @@ def post_review_comment(repo: Path, pr_number: int, body: str) -> None:
                         return
             except json.JSONDecodeError:
                 pass
-    proc = subprocess.run(["gh", "pr", "comment", str(pr_number), "--body", body], cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = subprocess.run(
+        ["gh", "pr", "comment", str(pr_number), "--body", body],
+        cwd=repo,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
     if proc.returncode != 0:
         raise RuntimeError(f"gh pr comment failed: {proc.stderr.strip()}")
 
@@ -140,15 +175,14 @@ def process_once(
     prs: Optional[list[dict[str, Any]]] = None,
     reviewer: Callable[..., ReviewResult] = review_pr_head,
     poster: Callable[[Path, int, str], None] = post_review_comment,
+    dispatcher: Callable[..., dict[str, Any]] = dispatch_task,
     record_heartbeat: bool = False,
 ) -> list[dict[str, Any]]:
-    """Review each marked implementation PR head exactly once.
+    """Review each trusted implementation PR head exactly once.
 
-    GitHub PR head SHA is the live implementation truth. We intentionally do not
-    mutate/commit `.ai/state/tasks.json` from the watcher because that checkout
-    may be on a protected base branch and because ChatGPT fix iterations advance
-    the PR head independently. The review comment itself is the event that routes
-    control back to ChatGPT Work.
+    GitHub PR head SHA is the live implementation truth. REVISE comments are
+    audit evidence only; the bridge actively dispatches the fix against that
+    exact reviewed SHA and never treats a GitHub comment as an execution trigger.
     """
     state = load_watcher_state(repo)
     events: list[dict[str, Any]] = []
@@ -156,33 +190,65 @@ def process_once(
         task_id = parse_implementation_marker(pr.get("body") or "")
         if not task_id:
             continue
-        if pr.get("isCrossRepository"):
-            head_sha = pr["headRefOid"]
-            key = str(pr["number"])
-            if state["reviewed_heads"].get(key) != head_sha:
-                events.append({"task_id": task_id, "pr": int(pr["number"]), "status": "skipped", "reason": "cross-repository PRs are not executed locally"})
-                state["reviewed_heads"][key] = head_sha
-                save_watcher_state(repo, state)
-            continue
-        prefix = str(load_config(repo)["automation"].get("implementation_branch_prefix", "ai/"))
-        if prefix and not str(pr.get("headRefName") or "").startswith(prefix):
-            head_sha = pr["headRefOid"]
-            key = str(pr["number"])
-            if state["reviewed_heads"].get(key) != head_sha:
-                events.append({"task_id": task_id, "pr": int(pr["number"]), "status": "skipped", "reason": f"implementation branch must start with {prefix}"})
-                state["reviewed_heads"][key] = head_sha
-                save_watcher_state(repo, state)
-            continue
-        head_sha = pr["headRefOid"]
+
+        head_sha = str(pr.get("headRefOid") or "")
         key = str(pr["number"])
         if state["reviewed_heads"].get(key) == head_sha:
             continue
+        if pr.get("isCrossRepository"):
+            events.append({"task_id": task_id, "pr": int(pr["number"]), "status": "skipped", "reason": "cross-repository PRs are not executed locally"})
+            state["reviewed_heads"][key] = head_sha
+            save_watcher_state(repo, state)
+            continue
+
+        prefix = str(load_config(repo)["automation"].get("implementation_branch_prefix", "ai/"))
+        head_branch = str(pr.get("headRefName") or "")
+        if prefix and not head_branch.startswith(prefix):
+            events.append({"task_id": task_id, "pr": int(pr["number"]), "status": "skipped", "reason": f"implementation branch must start with {prefix}"})
+            state["reviewed_heads"][key] = head_sha
+            save_watcher_state(repo, state)
+            continue
+
         task = resolve_task_for_review(repo, task_id, base_ref_name=pr.get("baseRefName"))
-        result = reviewer(repo, task_id=task_id, pr_number=int(pr["number"]), head_sha=head_sha, base_commit=task["base"]["commit"])
+        expected_branch = str(task.get("target_branch") or "")
+        if expected_branch and head_branch != expected_branch:
+            events.append({"task_id": task_id, "pr": int(pr["number"]), "status": "skipped", "reason": f"implementation branch must exactly match {expected_branch}"})
+            state["reviewed_heads"][key] = head_sha
+            save_watcher_state(repo, state)
+            continue
+
+        result = reviewer(
+            repo,
+            task_id=task_id,
+            pr_number=int(pr["number"]),
+            head_sha=head_sha,
+            base_commit=task["base"]["commit"],
+        )
         poster(repo, int(pr["number"]), review_to_markdown(task_id, head_sha, result))
+
+        event: dict[str, Any] = {
+            "task_id": task_id,
+            "pr": int(pr["number"]),
+            "head_sha": head_sha,
+            "verdict": result.verdict,
+        }
+        if result.verdict == "REVISE":
+            dispatch_result = dispatcher(
+                repo,
+                task_id,
+                phase="fix",
+                reviewed_head=head_sha,
+                implementation_pr_url=pr.get("url"),
+            )
+            event["fix_dispatch"] = {
+                "dispatch_key": dispatch_result.get("dispatch_key"),
+                "reused": bool(dispatch_result.get("reused")),
+            }
+
         state["reviewed_heads"][key] = head_sha
         save_watcher_state(repo, state)
-        events.append({"task_id": task_id, "pr": int(pr["number"]), "head_sha": head_sha, "verdict": result.verdict})
+        events.append(event)
+
     if record_heartbeat:
         state["last_poll_at"] = now_iso()
         save_watcher_state(repo, state)
