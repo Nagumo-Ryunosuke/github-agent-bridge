@@ -148,8 +148,10 @@ def process_once(
     mutate/commit `.ai/state/tasks.json` from the watcher because that checkout
     may be on a protected base branch and because ChatGPT fix iterations advance
     the PR head independently. The review comment itself is the event that routes
-    control back to ChatGPT Work.
+    control back to the configured ChatGPT conversation.
     """
+    if load_config(repo)["workflow"].get("reviewer") != "codex":
+        raise RuntimeError("Codex review is disabled; relay the exact PR head to ordinary Chat for review")
     state = load_watcher_state(repo)
     events: list[dict[str, Any]] = []
     for pr in prs if prs is not None else list_implementation_prs(repo):
@@ -178,6 +180,9 @@ def process_once(
         if state["reviewed_heads"].get(key) == head_sha:
             continue
         task = resolve_task_for_review(repo, task_id, base_ref_name=pr.get("baseRefName"))
+        if task.get("reviewer") != "codex":
+            events.append({"task_id": task_id, "status": "skipped", "reason": "task reviewer is not Codex"})
+            continue
         result = reviewer(repo, task_id=task_id, pr_number=int(pr["number"]), head_sha=head_sha, base_commit=task["base"]["commit"])
         poster(repo, int(pr["number"]), review_to_markdown(task_id, head_sha, result))
         state["reviewed_heads"][key] = head_sha
@@ -191,6 +196,8 @@ def process_once(
 
 def watch(repo: Path, interval: Optional[int] = None) -> None:
     config = load_config(repo)
+    if config["workflow"].get("reviewer") != "codex":
+        raise RuntimeError("Codex review is disabled in the ordinary Chat workflow")
     sleep_for = interval or int(config["automation"]["watch_interval_seconds"])
     while True:
         try:

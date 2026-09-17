@@ -1,3 +1,5 @@
+> Legacy optional Codex-review deployment reference. The default ordinary Chat workflow does not install a reviewer service or create Work triggers. Follow [browser-chat.md](browser-chat.md) for current routing; these instructions apply only when the user explicitly chooses the older local-review workflow.
+
 # Windows 本地部署与使用
 
 本项目包含三部分：给 Codex 的 Skill、`agent-bridge` Python CLI、本地自动审查 watcher。只复制 SKILL.md 不会建立 ChatGPT 与 Codex 的自动协作链路。

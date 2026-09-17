@@ -2,17 +2,37 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "GitHub Agent Bridge Config",
   "type": "object",
-  "required": ["schema_version", "workflow", "github", "automation", "review"],
+  "required": [
+    "schema_version",
+    "workflow",
+    "github",
+    "automation",
+    "review"
+  ],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {
+      "const": 1
+    },
     "github": {
       "type": "object",
-      "required": ["mode", "repositories"],
+      "required": [
+        "mode",
+        "repositories"
+      ],
       "properties": {
-        "mode": {"enum": ["managed", "custom-mcp", "readonly"]},
+        "mode": {
+          "enum": [
+            "managed",
+            "custom-mcp",
+            "readonly"
+          ]
+        },
         "repositories": {
           "type": "array",
-          "items": {"type": "string", "pattern": "^[^/]+/[^/]+$"},
+          "items": {
+            "type": "string",
+            "pattern": "^[^/]+/[^/]+$"
+          },
           "uniqueItems": true
         }
       }
@@ -20,24 +40,104 @@
     "automation": {
       "type": "object",
       "properties": {
-        "work_trigger": {"const": "github-pr"},
-        "work_trigger_confirmed": {"type": "boolean"},
+        "work_trigger": {
+          "const": "github-pr"
+        },
+        "work_trigger_confirmed": {
+          "type": "boolean"
+        },
         "work_trigger_repositories": {
           "type": "array",
-          "items": {"type": "string", "pattern": "^[^/]+/[^/]+$"},
+          "items": {
+            "type": "string",
+            "pattern": "^[^/]+/[^/]+$"
+          },
           "uniqueItems": true
         },
-        "implementation_branch_prefix": {"type": "string", "minLength": 1},
-        "watch_interval_seconds": {"type": "integer", "minimum": 1}
+        "implementation_branch_prefix": {
+          "type": "string",
+          "minLength": 1
+        },
+        "watch_interval_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "chat": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "work": {
+          "type": "object",
+          "properties": {
+            "automatic_invocation": {
+              "const": false
+            }
+          }
+        }
       }
     },
     "review": {
       "type": "object",
       "properties": {
-        "test_commands": {"type": "array", "items": {"type": "string", "minLength": 1}},
-        "codex_command": {"type": "string", "minLength": 1},
-        "timeout_seconds": {"type": "integer", "minimum": 1},
-        "require_tests_for_approval": {"type": "boolean"}
+        "test_commands": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "codex_command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "require_tests_for_approval": {
+          "type": "boolean"
+        }
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "properties": {
+        "dispatcher": {
+          "type": "string"
+        },
+        "dispatcher_model": {
+          "type": "string"
+        },
+        "dispatcher_role": {
+          "type": "string"
+        },
+        "developer_surface": {
+          "enum": [
+            "chatgpt-web-chat"
+          ]
+        },
+        "reviewer": {
+          "enum": [
+            "chatgpt",
+            "codex"
+          ]
+        },
+        "human_merge_required": {
+          "type": "boolean"
+        }
       }
     }
   }

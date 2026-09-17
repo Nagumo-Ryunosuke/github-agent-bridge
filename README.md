@@ -1,383 +1,86 @@
-# github-agent-bridge
+# GitHub Agent Bridge
 
-**One Skill for Codex Desktop/App, Codex CLI and IDE clients. One bootstrap command installs the bridge, shared Skill and required local tooling, then the Skill self-checks the machine and asks only for security-sensitive confirmations that cannot be inferred.**
+A skill and Python CLI for relaying development from desktop Codex to **ordinary ChatGPT Web Chat**. Codex clarifies requirements and transports artifacts; browser Chat designs, implements and reviews. GitHub stores the task, code and exact commit identity. The human decides whether to merge.
 
-`github-agent-bridge` coordinates a GitHub-mediated development loop:
+## Fix for accidental Work conversations
 
-```text
-Codex local analysis / dispatch
-        ↓
-GitHub Task PR
-        ↓
-ChatGPT Work implementation + tests + self-review
-        ↓
-Implementation PR
-        ↓
-Local watcher + real tests + codex exec review
-        ↓
-APPROVE → human merge
-REVISE  → ChatGPT fixes → re-review
-```
+The previous default explicitly created event-triggered **Work** tasks and ran a Codex review watcher. A prompt saying “continue in Chat” cannot turn a Work task into ordinary Chat. This version selects the browser's Chat surface instead:
 
-## One-command install
+- Desktop Codex preference: GPT-6 Astra (`gpt-6-astra`), questions and artifact relay only. The app model selector controls the real model; the skill cannot set it.
+- Web model: preserve the model actually selected in ordinary Chat. Do not silently change it or use Work.
+- Design, implementation, self-review, independent review and fixes: ordinary Chat.
+- `chat prepare` creates a commit-pinned handoff packet. `chat delivered` records a browser-observed assistant acknowledgment. Preparation is not delivery, and delivery is not task completion.
+- Legacy Work prompt/confirmation entry points refuse to create Work. A default Chat reviewer also blocks the Codex watcher before it accesses PRs or invokes a model.
 
-You do **not** need to clone this repository first.
+**Current capability boundary:** browser sending/reading is performed by the active browser-capable agent using the skill. The CLI has no ChatGPT session and does not bundle an unattended GitHub-event-to-Chat adapter. `doctor` therefore reports `Zero-touch ready: NO`. No Work task, scheduled task or polling loop is created to hide that gap. Ordinary Chat's repository writer and test runtime must be verified separately; otherwise it returns a patch and explicit untested limitations.
 
-### Windows PowerShell
+## Install or upgrade
 
-```powershell
-irm https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.ps1 | iex
-```
+Python 3.9+ and Git are required for the local packet workflow. GitHub CLI is needed for repository publishing. Codex CLI and its watcher are **not required** for the ordinary Chat workflow.
 
-### Linux / macOS
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Nagumo-Ryunosuke/github-agent-bridge/main/scripts/bootstrap.sh | sh
-```
-
-The Unix bootstrap is POSIX-sh compatible, so it does not require Bash on minimal Linux distributions.
-
-The bootstrap shows one consolidated machine-change confirmation and then, as needed:
-
-- installs Python >= 3.9;
-- creates a private per-user virtual environment;
-- installs/updates `github-agent-bridge`;
-- installs Git and GitHub CLI (`gh`);
-- installs Codex CLI using the official OpenAI installer or supported native tooling;
-- installs the shared Skill at `$HOME/.agents/skills/github-agent-bridge`;
-- starts `gh auth login -w` and `codex login` when authentication is missing. Both flows use the system default browser (usually Chrome on Windows); the in-app browser is not required.
-
-GitHub authorization, ChatGPT/Codex login, OS elevation and explicit repository write/unattended-write attestations are intentionally **not bypassed**.
-
-After installation, restart Codex Desktop/App or Codex CLI so it reloads the Skill.
-
-Then open any target Git repository and say:
-
-> Use `$github-agent-bridge` for this requirement. Let ChatGPT implement it, let Codex run local tests and review it, and leave the final merge to me.
-
-中文可直接说：
-
-> 使用 `$github-agent-bridge`，为“我的需求”创建并发布任务，由 ChatGPT 实现，Codex 本地测试和审查，最后由我合并。
-
-仅有 GitHub remote URL 时，安装 CLI 后可直接接入仓库：
-
-```bash
-agent-bridge connect https://github.com/OWNER/REPO.git
-```
-
-该命令会验证当前 GitHub 账号的仓库写权限，克隆或恢复本地 checkout，初始化 `.ai/`、识别测试命令并安装仓库级 Skill。重复执行会保留已有代码和桥接状态；URL 中不允许凭据，仓库不允许写入时会在克隆前停止。
-
-## What happens automatically when the Skill is used
-
-The installed Skill follows a self-bootstrap contract:
-
-```text
-$github-agent-bridge invoked
-        ↓
-agent-bridge env status
-        ↓
-missing local dependency?
-   ├─ no  → repository setup/doctor
-   └─ yes → show one consolidated install plan
-               ↓
-            user confirms
-               ↓
-        agent-bridge env install --yes
-               ↓
-        re-check environment
-               ↓
-        infer repository + tests
-               ↓
-        setup bootstrap / doctor
-               ↓
-        dispatch task
-```
-
-The Skill should not respond with a long manual checklist such as “install Git, then install gh, then install Codex”. It should detect the machine, consolidate safe installation changes into one approval, perform them, re-check readiness, and continue.
-
-Useful environment commands:
-
-```bash
-agent-bridge env status
-agent-bridge env install
-agent-bridge env install --yes
-```
-
-For Desktop-only dispatch without the unattended local reviewer:
-
-```bash
-agent-bridge env status --skip-codex
-agent-bridge env install --skip-codex
-```
-
-`--skip-codex` is **not** full zero-touch readiness. The persistent reviewer calls `codex exec --ephemeral`, so Codex CLI remains a runtime dependency even if you normally work only in Codex Desktop.
-
-## Platform and architecture model
-
-The bridge itself is pure Python and does not hard-code x86 installation paths. Bootstrap detects the OS/CPU and delegates architecture-specific binaries to upstream package managers/installers.
-
-Primary tested operating systems:
-
-| OS | Bootstrap / service backend |
-| --- | --- |
-| Windows | PowerShell + WinGet / per-user Task Scheduler |
-| Linux | detected package manager / `systemd --user` |
-| macOS | POSIX shell + native/Homebrew tooling / LaunchAgent |
-
-Linux package-manager detection currently covers:
-
-```text
-apt-get / dnf / yum / zypper / pacman / apk
-```
-
-The goal is architecture-neutral behavior, but full automation cannot exceed upstream availability. If GitHub CLI, Python or Codex CLI has no usable build/package for a particular OS/CPU, the bridge must report that exact boundary rather than claiming deployment success.
-
-## Shared Skill location
-
-A user installation writes real files to:
-
-```text
-$HOME/.agents/skills/github-agent-bridge
-```
-
-The same directory is used by the supported local Codex surfaces:
-
-```text
-                 ~/.agents/skills/github-agent-bridge
-                            │
-              ┌─────────────┼─────────────┐
-              ↓             ↓             ↓
-       Codex Desktop     Codex CLI      Codex IDE
-```
-
-Manual Skill maintenance remains available:
-
-```bash
+```shell
+python -m pip install --upgrade git+https://github.com/Nagumo-Ryunosuke/github-agent-bridge.git
 agent-bridge skill install --scope user
 agent-bridge skill status --scope user
-agent-bridge skill uninstall --scope user
 ```
 
-Repository-local Skill installation is optional:
+Before a fix is merged, install from its exact branch/commit rather than `main`, or install this checkout with `python -m pip install .`. Updating root `SKILL.md` alone does not update the installed package's skill copy. Reload the app task after upgrading the installed skill.
 
-```bash
-agent-bridge skill install --scope repo
+Existing bootstrap scripts remain available for legacy full-review deployments; they can install Codex CLI and should not be used merely to set up browser Chat relay.
+
+## Use from desktop Codex
+
+Select GPT-6 Astra in the desktop Codex model selector, then ask:
+
+> Use $github-agent-bridge. Only clarify my requirements and relay materials here. Have ordinary ChatGPT Web Chat design, implement and review this task. Do not create Work tasks or run a Codex reviewer.
+
+The skill uses the connected logged-in browser. If Chrome is requested, its connection must be available; Codex's in-app browser has a separate session. Chat/Work must be checked in the visible UI: the conversation URL alone cannot distinguish them.
+
+## CLI workflow
+
+Run inside the target repository:
+
+```shell
+agent-bridge init
+agent-bridge setup chat --url https://chatgpt.com/c/SAVED-CONVERSATION-ID --model "VISIBLE WEB MODEL LABEL"
+agent-bridge task create --title "Requested change" --objective "User requirements and acceptance criteria" --reviewer chatgpt
+agent-bridge chat prepare TASK-000001 --phase design
 ```
 
-## Repository bootstrap
+`setup chat` records a binding and migrates roles, not an app model selection or successful browser delivery. Read the prepared JSON and send its `prompt` through the ordinary Chat UI. Capture the assistant's `BRIDGE-ACK <digest>` and record the observed surface, URL and model:
 
-When `$github-agent-bridge` is used inside a real target repository, it should inspect the repository and infer a genuine local test command from existing project tooling whenever possible.
-
-Manual equivalent:
-
-```bash
-agent-bridge setup bootstrap \
-  --mode managed \
-  --connection-name github-agent-bridge-writer \
-  --test-command 'python -m unittest discover -s tests -v'
+```shell
+agent-bridge chat delivered TASK-000001 --phase design --surface chat --url https://chatgpt.com/c/SAVED-CONVERSATION-ID --model "VISIBLE WEB MODEL LABEL" --reply-file assistant-reply.txt
+agent-bridge chat status TASK-000001 --phase design
+agent-bridge chat result TASK-000001 --phase design --result-file observed-result.json
+agent-bridge chat prepare TASK-000001 --phase implement
+agent-bridge chat prepare TASK-000001 --phase review --head EXACT_40_CHARACTER_PR_HEAD_SHA
+agent-bridge chat prepare TASK-000001 --phase fix --head EXACT_40_CHARACTER_PR_HEAD_SHA
 ```
 
-Do **not** blindly set these flags:
+Complete instructions: [browser transport](references/browser-chat.md). A receipt is explicitly an operator/agent UI attestation, not independent server verification. The `sent` checkpoint survives browser interruptions; `result` validates and stores the completed phase without executing any returned commands. Prior Chat results carry into subsequent phase packets. Duplicate preparations reuse the packet/receipt; changed requirements or bindings invalidate it. Task code drift blocks sending. Review/fix require a full head SHA and reject a mismatch with the recorded implementation. Check the current GitHub PR head before review and again before reporting approval.
 
-```text
---confirm-write
---confirm-unattended
---confirm-work-trigger
-```
+Use a separate ordinary Chat for independent review when available; provide the full contract, diff and evidence and rebind before preparing. If Chat lacks a writer or runtime, return its patch and capability gap. Local application/tests require the user's authorization; the desktop dispatcher relays failures back to Chat.
 
-They are safety attestations. The Skill should ask only when the relevant capability actually needs human confirmation and should never fabricate the confirmation.
+## Migration
 
-Bootstrap initializes `.ai/`, infers `owner/repo` from a `github.com` origin when possible, configures reviewer policy, and reports any remaining platform step.
+- Upgrade both the package and installed user skill; stale installed skill instructions can still create Work.
+- `setup chat` sets the reviewer to ChatGPT and clears local Work confirmations. Existing tasks retain their explicit reviewer; recreate old Codex-review tasks with `--reviewer chatgpt`.
+- Previously saved platform Work tasks and already running processes are not removed by editing config. Inspect and disable them through their own controls within the user's authorization.
+- The old local review implementation remains opt-in through explicit `workflow.reviewer=codex`. It is not part of the default browser Chat workflow.
+- Publishing a Task PR stores a contract on GitHub; it does not wake ordinary Chat automatically.
 
-## GitHub / ChatGPT event triggers
+## Development
 
-The unattended loop requires two repository-scoped ChatGPT Work triggers:
-
-1. Task PR opened/ready + `agent-bridge:task` marker → ChatGPT implements.
-2. PR comment containing `agent-bridge:codex-review` and `verdict=REVISE` → ChatGPT fixes.
-
-After they have actually been created and verified:
-
-```bash
-agent-bridge setup work-trigger --confirm
-```
-
-The bridge must not mark this step complete merely because configuration files exist.
-
-## Persistent local reviewer
-
-From each target repository:
-
-```bash
-agent-bridge service install
-agent-bridge service status
-```
-
-Automatic backend:
-
-| Platform | Backend | Privilege |
-| --- | --- | --- |
-| Linux | `systemd --user` | current user |
-| macOS | LaunchAgent / `launchctl` | current GUI user |
-| Windows | Task Scheduler | current user, `LIMITED` |
-
-Fallback:
-
-```bash
-agent-bridge watch
-```
-
-The watcher checks each eligible Implementation PR head SHA once, creates an isolated temporary worktree, runs configured authoritative local tests, invokes structured `codex exec --ephemeral`, and posts `APPROVE` or `REVISE` feedback.
-
-## Readiness gate
-
-Run:
-
-```bash
-agent-bridge doctor
-```
-
-Full unattended operation is ready only when it reports:
-
-```text
-Zero-touch ready: YES
-```
-
-The readiness gate checks, among other things:
-
-- bridge initialization;
-- GitHub origin and repository access;
-- GitHub CLI installation/authentication;
-- Codex CLI availability and `codex login status` authentication;
-- ChatGPT/GitHub writer capability and unattended policy confirmation;
-- repository allowlist;
-- repository-scoped Work trigger confirmation;
-- real local test policy;
-- trusted implementation branch prefix;
-- fresh long-running watcher heartbeat;
-- human final-merge gate.
-
-## Writer modes
-
-ChatGPT needs a write path to create/update an implementation PR.
-
-### `managed`
-
-Recommended when ChatGPT has an already connected, write-capable GitHub connection.
-
-```bash
-agent-bridge setup writer \
-  --mode managed \
-  --connection-name github-agent-bridge-writer \
-  --repository OWNER/REPO
-```
-
-Only after the actual capability is tested should the operator attest:
-
-```bash
-agent-bridge setup writer \
-  --mode managed \
-  --connection-name github-agent-bridge-writer \
-  --repository OWNER/REPO \
-  --confirm-write \
-  --confirm-unattended
-```
-
-### `custom-mcp`
-
-The optional writer MCP exposes least-privilege branch/file/PR/comment operations and intentionally omits merge, secrets, repository deletion and admin settings.
-
-```bash
-pip install 'github-agent-bridge[mcp]'
-export AGENT_BRIDGE_ALLOWED_REPOS='OWNER/REPO'
-export AGENT_BRIDGE_BRANCH_PREFIX='ai/'
-agent-bridge-mcp
-```
-
-### `readonly`
-
-```bash
-agent-bridge setup writer --mode readonly
-```
-
-In this mode ChatGPT may plan or produce a patch, but must not claim it pushed code.
-
-## Task lifecycle
-
-Manual equivalent of what the Skill dispatches:
-
-```bash
-agent-bridge task create \
-  --title 'Refactor tag synchronization' \
-  --objective 'Unify scheduled sync, manual repair, and reconciliation.' \
-  --assigned-to chatgpt \
-  --reviewer codex \
-  --priority high
-
-agent-bridge drift TASK-000001
-agent-bridge validate
-agent-bridge publish task TASK-000001
-```
-
-ChatGPT then implements on an exact-base implementation branch and opens/updates the marked implementation PR. Codex watcher reviews each new exact head SHA. `REVISE` routes back to ChatGPT; `APPROVE` leaves the final merge to the human.
-
-## Security boundaries
-
-Default separation:
-
-- **ChatGPT writer:** branch/file/PR/comment writes only.
-- **Codex watcher:** local checkout, configured test execution, review/comment.
-- **Human:** final merge/acceptance.
-
-Recommended GitHub repository permissions:
-
-```text
-Metadata       read
-Contents       write
-Pull requests  write
-Issues         write
-Actions        read
-```
-
-Do not grant repository administration, secrets, deletion or merge powers merely to simplify setup.
-
-Local tests execute implementation PR code. Use an appropriate machine/container/VM for untrusted code.
-
-## Development / CI
-
-The unit suite runs on Linux, macOS and Windows across Python 3.9, 3.11 and 3.13. Python 3.11 jobs also build the wheel and verify that the bundled Skill assets are included. CI additionally parses both bootstrap scripts so syntax regressions are caught on their native platforms.
-
-```bash
+```shell
+python -m pip install -e .
 python -m unittest discover -s tests -v
-python -m compileall -q src tests
-sh -n scripts/bootstrap.sh
 ```
 
-## Useful commands
+For source-only invocation set `PYTHONPATH=src`, then use `python -m github_agent_bridge ...`. Changes to `SKILL.md`, `agents/openai.yaml` and shipped references must be synchronized with `src/github_agent_bridge/skill_bundle/`.
 
-```bash
-agent-bridge env status
-agent-bridge env install
-agent-bridge skill status --scope user
-agent-bridge service status
-agent-bridge status
-agent-bridge capabilities
-agent-bridge doctor
-agent-bridge doctor --json
-agent-bridge watch --once
-agent-bridge validate
-```
+See [writer modes](references/writer-modes.md), [protocol](references/protocol.md), and [security](references/security.md). Never put credentials in `.ai/`; merge stays human-controlled.
 
-See also:
+## Related open-source designs
 
-- `SKILL.md`
-- `references/bootstrap.md`
-- `references/cross-platform.md`
-- `references/automation.md`
-- `references/writer-modes.md`
-- `references/protocol.md`
-- `references/security.md`
-
-## License
-
-MIT
+We compared [codex-with-chatgpt](https://github.com/XiaoDuoYa/codex-with-chatgpt), [codex-bridge-chatgpt](https://github.com/anightmonarch/codex-bridge-chatgpt), and [codex-chatgpt-bridge](https://github.com/RPG-478/codex-chatgpt-bridge). Their checkpoint/receipt/result-validation approaches informed the handoff flow. Their usual Codex-as-executor split is not adopted: ordinary Chat still owns implementation here. See [the comparison and pinned source revisions](references/related-projects.md).

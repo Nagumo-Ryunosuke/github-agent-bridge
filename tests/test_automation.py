@@ -6,13 +6,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from github_agent_bridge.config import configure_writer
+from github_agent_bridge.config import configure_writer, load_config, save_config
 from github_agent_bridge.core import create_task, init_repo
 from github_agent_bridge.publisher import PublishError, _create_or_reuse_task_pr
 from github_agent_bridge.reviewer import ReviewExecutionError, ReviewResult, ensure_base_is_ancestor
 from github_agent_bridge.security import scan_text, validate_ai_tree
 from github_agent_bridge.triggers import (
-    build_chatgpt_work_prompt,
+    build_chatgpt_chat_prompt,
     codex_review_marker,
     implementation_marker,
     parse_codex_review_marker,
@@ -37,6 +37,9 @@ class AutomationCase(unittest.TestCase):
         (self.repo / "README.md").write_text("hello\n", encoding="utf-8")
         subprocess.check_call(["git", "add", "README.md"], cwd=self.repo); subprocess.check_call(["git", "commit", "-m", "init"], cwd=self.repo, stdout=subprocess.DEVNULL)
         init_repo(self.repo)
+        config = load_config(self.repo)
+        config["workflow"]["reviewer"] = "codex"
+        save_config(self.repo, config)
         self.task_id = create_task(self.repo, title="T", objective="O", assigned_to="chatgpt", reviewer="codex", created_by="codex", priority="normal", base_branch="main", target_branch=None)
 
     def tearDown(self) -> None:
@@ -53,13 +56,13 @@ class AutomationCase(unittest.TestCase):
             codex_review_marker(self.task_id, "MAYBE", "abcdef1")
 
     def test_work_prompt_reports_readonly_gap(self) -> None:
-        text = build_chatgpt_work_prompt(self.repo, self.task_id)
+        text = build_chatgpt_chat_prompt(self.repo, self.task_id)
         self.assertIn("not write-ready", text)
         self.assertIn("Do not pretend to push", text)
 
     def test_work_prompt_reports_managed_writer(self) -> None:
         configure_writer(self.repo, mode="managed", connection_name="writer", write_confirmed=True, unattended_confirmed=True)
-        text = build_chatgpt_work_prompt(self.repo, self.task_id)
+        text = build_chatgpt_chat_prompt(self.repo, self.task_id)
         self.assertIn("write-ready", text)
         self.assertIn("Unattended writes are confirmed", text)
 

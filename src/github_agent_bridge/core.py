@@ -61,7 +61,7 @@ def init_repo(repo: Path) -> list[Path]:
         save_config(repo, DEFAULT_CONFIG)
         created.append(config_file)
     default_files = {
-        Path(".ai/README.md"): """# AI Collaboration State\n\nGitHub is the durable transport and source of truth. ChatGPT is the primary planner/developer; Codex is the local reviewer and test executor.\n\n- `context/`: durable project context\n- `tasks/`: commit-pinned task contracts\n- `handoffs/`: implementation reports\n- `reviews/`: commit-pinned review results\n- `state/`: machine-readable workflow state\n- `config.json`: role, writer, trigger, and local-review configuration\n""",
+        Path(".ai/README.md"): """# AI Collaboration State\n\nGitHub is the durable transport and source of truth. ChatGPT is the primary planner/developer; Codex clarifies requirements and relays artifacts; ordinary Chat owns design, implementation and review.\n\n- `context/`: durable project context\n- `tasks/`: commit-pinned task contracts\n- `handoffs/`: implementation reports\n- `reviews/`: commit-pinned review results\n- `state/`: machine-readable workflow state\n- `config.json`: role, writer, trigger, and local-review configuration\n""",
         Path(".ai/context/project.md"): "# Project Context\n\nDescribe the repository purpose, major components, and common commands.\n",
         Path(".ai/context/architecture.md"): "# Architecture\n\nRecord durable architecture context here.\n",
         Path(".ai/context/constraints.md"): "# Constraints\n\nRecord compatibility, security, testing, and delivery constraints here.\n",
@@ -140,7 +140,7 @@ def create_task(repo: Path, *, title: str, objective: str, assigned_to: str, cre
     save_state(repo, state)
     target = target_branch or f"ai/{task_id.lower()}"
     (repo / TASKS_DIR / f"{task_id}.md").write_text(
-        f"""---\nschema_version: {SCHEMA_VERSION}\ntask_id: {task_id}\ntitle: {title}\ncreated_by: {created_by}\ncreated_at: {created_at}\ndeveloper: {developer}\nreviewer: {reviewer}\nstatus: ready\npriority: {priority}\nbase_branch: {branch}\nbase_commit: {base_commit}\ntarget_branch: {target}\n---\n\n# Objective\n\n{objective.strip()}\n\n# Development Policy\n\n- ChatGPT performs architecture/design, implementation, tests, and first self-review.\n- Codex performs the second review and authoritative local test/debug pass.\n- Neither agent merges the implementation PR automatically.\n\n# Constraints\n\n- Respect `.ai/context/constraints.md` and repository instructions.\n- Do not commit secrets or credentials.\n\n# Acceptance Criteria\n\n- Implementation is traceable to an exact commit and PR.\n- ChatGPT self-review completed before Codex handoff.\n- Codex local validation passes or findings are routed back to ChatGPT.\n""",
+        f"""---\nschema_version: {SCHEMA_VERSION}\ntask_id: {task_id}\ntitle: {title}\ncreated_by: {created_by}\ncreated_at: {created_at}\ndeveloper: {developer}\nreviewer: {reviewer}\nstatus: ready\npriority: {priority}\nbase_branch: {branch}\nbase_commit: {base_commit}\ntarget_branch: {target}\n---\n\n# Objective\n\n{objective.strip()}\n\n# Development Policy\n\n- ChatGPT performs architecture/design, implementation, tests, and first self-review.\n- The assigned reviewer ({reviewer}) reviews the exact implementation head. Codex only relays materials unless local execution is explicitly authorized.\n- Neither agent merges the implementation PR automatically.\n\n# Constraints\n\n- Respect `.ai/context/constraints.md` and repository instructions.\n- Do not commit secrets or credentials.\n\n# Acceptance Criteria\n\n- Implementation is traceable to an exact commit and PR.\n- ChatGPT self-review completed before review handoff.\n- Actual test evidence and review findings are returned to ordinary Chat; unexecuted tests are reported explicitly.\n""",
         encoding="utf-8",
     )
     return task_id
@@ -194,13 +194,13 @@ def finish_task(repo: Path, task_id: str, *, implementation_commit: str, branch:
     if not task: raise RuntimeError(f"task not found: {task_id}")
     if task["status"] in {"claimed", "changes_requested", "blocked"}: transition(task, "in_progress")
     if agent == "chatgpt" and not task.get("self_reviewed"):
-        raise RuntimeError("ChatGPT implementation cannot be handed to Codex before first self-review")
+        raise RuntimeError("ChatGPT implementation cannot be handed to review before first self-review")
     transition(task, "review_required")
     task["implementation"] = {"branch": branch, "commit": implementation_commit, "pr": pr, "agent": agent}
     task["next_agent"] = task.get("reviewer") or "codex"
     save_state(repo, state)
     path = repo / HANDOFFS_DIR / f"{task_id}-{agent}.md"
-    path.write_text(f"""---\nschema_version: {SCHEMA_VERSION}\ntask_id: {task_id}\nagent: {agent}\nstatus: implementation_completed\nbase_commit: {task['base']['commit']}\nimplementation_commit: {implementation_commit}\nbranch: {branch}\npr: {pr if pr is not None else 'null'}\ncreated_at: {now_iso()}\n---\n\n# Summary\n\n{summary.strip()}\n\n# Self Review\n\n{'Completed.' if task.get('self_reviewed') else 'Not recorded.'}\n\n# Validation\n\nChatGPT may reason about tests; Codex local validation is authoritative.\n""", encoding="utf-8")
+    path.write_text(f"""---\nschema_version: {SCHEMA_VERSION}\ntask_id: {task_id}\nagent: {agent}\nstatus: implementation_completed\nbase_commit: {task['base']['commit']}\nimplementation_commit: {implementation_commit}\nbranch: {branch}\npr: {pr if pr is not None else 'null'}\ncreated_at: {now_iso()}\n---\n\n# Summary\n\n{summary.strip()}\n\n# Self Review\n\n{'Completed.' if task.get('self_reviewed') else 'Not recorded.'}\n\n# Validation\n\nReport actual test execution separately from model reasoning; ordinary Chat reviews the evidence.\n""", encoding="utf-8")
     return path
 
 

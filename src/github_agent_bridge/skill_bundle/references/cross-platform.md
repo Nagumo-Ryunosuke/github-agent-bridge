@@ -1,3 +1,5 @@
+> Legacy optional Codex-review deployment reference. The default ordinary Chat workflow does not install a reviewer service or create Work triggers. Follow [browser-chat.md](browser-chat.md) for current routing; these instructions apply only when the user explicitly chooses the older local-review workflow.
+
 # Cross-platform Codex operation
 
 `github-agent-bridge` keeps Skill discovery and the persistent reviewer portable across Codex Desktop/App, Codex CLI and IDE clients.

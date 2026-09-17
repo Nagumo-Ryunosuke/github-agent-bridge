@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from github_agent_bridge.core import init_repo
+from github_agent_bridge.config import load_config, save_config
 from github_agent_bridge.watcher import load_watcher_state, process_once
 
 
@@ -20,6 +21,9 @@ class WatcherHeartbeatCase(unittest.TestCase):
         subprocess.check_call(["git", "add", "README.md"], cwd=self.repo)
         subprocess.check_call(["git", "commit", "-m", "init"], cwd=self.repo, stdout=subprocess.DEVNULL)
         init_repo(self.repo)
+        config = load_config(self.repo)
+        config["workflow"]["reviewer"] = "codex"
+        save_config(self.repo, config)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
