@@ -1,21 +1,21 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Optional
 
 CONFIG_PATH = Path(".ai/config.json")
+_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "schema_version": 1,
     "workflow": {
         "dispatcher": "codex",
-        "dispatcher_model": "gpt-6-astra",
-        "dispatcher_role": "questions-and-relay",
         "developer": "chatgpt",
-        "developer_surface": "chatgpt-web-chat",
-        "reviewer": "chatgpt",
+        "developer_surface": "codex-harness",
+        "reviewer": "codex",
         "human_merge_required": True,
         "chatgpt_self_review": True,
     },
@@ -33,12 +33,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "unattended_confirmed": False,
         },
     },
+    "implementation": {
+        "backend": None,
+        "command": "codex",
+        "model": None,
+        "sandbox": "workspace-write",
+        "tool_mode": "full",
+        "timeout_seconds": 3600,
+        "credential_env": None,
+        "zero_personal_plus": True,
+    },
     "automation": {
-        "chat": {"url": None, "model": None},
-        "work": {"automatic_invocation": False},
-        "work_trigger": "github-pr",
-        "work_trigger_confirmed": False,
-        "work_trigger_repositories": [],
         "watch_interval_seconds": 30,
         "implementation_marker": "agent-bridge:implementation",
         "implementation_branch_prefix": "ai/",
@@ -47,6 +52,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "review": {
         "test_commands": [],
         "codex_command": "codex",
+        "model": None,
+        "credential_env": None,
+        "zero_personal_plus": True,
         "timeout_seconds": 1800,
         "require_tests_for_approval": True,
     },
@@ -63,6 +71,19 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return merged
 
 
+def _reject_legacy_work_config(raw: dict[str, Any]) -> None:
+    automation = raw.get("automation")
+    if not isinstance(automation, dict):
+        return
+    legacy = {"work", "work_trigger", "work_trigger_confirmed", "work_trigger_repositories"}
+    present = sorted(legacy.intersection(automation))
+    if present:
+        raise RuntimeError(
+            "legacy ChatGPT Work event configuration is unsupported; remove automation."
+            + ", automation.".join(present)
+        )
+
+
 def load_config(repo: Path) -> dict[str, Any]:
     path = repo / CONFIG_PATH
     if not path.exists():
@@ -70,10 +91,12 @@ def load_config(repo: Path) -> dict[str, Any]:
     raw = json.loads(path.read_text(encoding="utf-8"))
     if raw.get("schema_version", 1) != 1:
         raise RuntimeError("unsupported .ai/config.json schema_version")
+    _reject_legacy_work_config(raw)
     return _deep_merge(DEFAULT_CONFIG, raw)
 
 
 def save_config(repo: Path, config: dict[str, Any]) -> Path:
+    _reject_legacy_work_config(config)
     path = repo / CONFIG_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -89,6 +112,15 @@ def _normalize_repositories(repositories: list[str]) -> list[str]:
         if value not in normalized:
             normalized.append(value)
     return normalized
+
+
+def _validate_env_name(value: Optional[str], *, field: str) -> Optional[str]:
+    if value is None:
+        return None
+    value = value.strip()
+    if not value or not _ENV_NAME_RE.fullmatch(value):
+        raise RuntimeError(f"{field} must be an environment variable name, never a credential value")
+    return value
 
 
 def configure_writer(
@@ -114,9 +146,6 @@ def configure_writer(
         normalized = _normalize_repositories(repositories)
         scope_changed = normalized != previous_repositories
         github["repositories"] = normalized
-    if scope_changed:
-        config["automation"]["work_trigger_confirmed"] = False
-        config["automation"]["work_trigger_repositories"] = []
 
     mode_changed = mode != previous_mode
     if mode == "managed":
@@ -155,11 +184,64 @@ def configure_writer(
     return config
 
 
+def configure_implementation(
+    repo: Path,
+    *,
+    backend: Optional[str] = None,
+    command: Optional[str] = None,
+    model: Optional[str] = None,
+    sandbox: Optional[str] = None,
+    tool_mode: Optional[str] = None,
+    timeout_seconds: Optional[int] = None,
+    credential_env: Optional[str] = None,
+    zero_personal_plus: Optional[bool] = None,
+) -> dict[str, Any]:
+    config = load_config(repo)
+    implementation = config["implementation"]
+    if backend is not None:
+        if backend not in {"chatgpt-web", "service-account"}:
+            raise RuntimeError("implementation backend must be chatgpt-web or service-account")
+        implementation["backend"] = backend
+    if command is not None:
+        if not command.strip():
+            raise RuntimeError("implementation command must not be empty")
+        implementation["command"] = command.strip()
+    if model is not None:
+        if not model.strip():
+            raise RuntimeError("implementation model must not be empty")
+        implementation["model"] = model.strip()
+    if sandbox is not None:
+        if sandbox not in {"read-only", "workspace-write", "danger-full-access"}:
+            raise RuntimeError("implementation sandbox is invalid")
+        implementation["sandbox"] = sandbox
+    if tool_mode is not None:
+        if tool_mode not in {"browser-only", "full"}:
+            raise RuntimeError("implementation tool mode must be browser-only or full")
+        implementation["tool_mode"] = tool_mode
+    if timeout_seconds is not None:
+        if timeout_seconds < 1:
+            raise RuntimeError("implementation timeout must be positive")
+        implementation["timeout_seconds"] = timeout_seconds
+    if credential_env is not None:
+        implementation["credential_env"] = _validate_env_name(
+            credential_env or None, field="implementation credential_env"
+        )
+    if zero_personal_plus is not None:
+        implementation["zero_personal_plus"] = bool(zero_personal_plus)
+    if implementation.get("backend") == "service-account" and not implementation.get("credential_env"):
+        raise RuntimeError("service-account implementation backend requires credential_env")
+    save_config(repo, config)
+    return config
+
+
 def configure_review(
     repo: Path,
     *,
     test_commands: Optional[list[str]] = None,
     codex_command: Optional[str] = None,
+    model: Optional[str] = None,
+    credential_env: Optional[str] = None,
+    zero_personal_plus: Optional[bool] = None,
     timeout_seconds: Optional[int] = None,
     require_tests_for_approval: Optional[bool] = None,
 ) -> dict[str, Any]:
@@ -171,22 +253,22 @@ def configure_review(
         if not codex_command.strip():
             raise RuntimeError("codex command must not be empty")
         review["codex_command"] = codex_command.strip()
+    if model is not None:
+        if not model.strip():
+            raise RuntimeError("review model must not be empty")
+        review["model"] = model.strip()
+    if credential_env is not None:
+        review["credential_env"] = _validate_env_name(
+            credential_env or None, field="review credential_env"
+        )
+    if zero_personal_plus is not None:
+        review["zero_personal_plus"] = bool(zero_personal_plus)
     if timeout_seconds is not None:
         if timeout_seconds < 1:
             raise RuntimeError("review timeout must be positive")
         review["timeout_seconds"] = timeout_seconds
     if require_tests_for_approval is not None:
         review["require_tests_for_approval"] = bool(require_tests_for_approval)
-    save_config(repo, config)
-    return config
-
-
-def configure_work_trigger(repo: Path, *, confirmed: bool) -> dict[str, Any]:
-    if confirmed:
-        raise RuntimeError("Work dispatch is disabled; use `agent-bridge chat prepare <TASK>` and an ordinary browser Chat")
-    config = load_config(repo)
-    config["automation"]["work_trigger_confirmed"] = bool(confirmed)
-    config["automation"]["work_trigger_repositories"] = list(config["github"].get("repositories") or []) if confirmed else []
     save_config(repo, config)
     return config
 
@@ -204,7 +286,6 @@ def bootstrap_config(
     codex_command: Optional[str] = None,
     timeout_seconds: Optional[int] = None,
     require_tests_for_approval: Optional[bool] = None,
-    work_trigger_confirmed: Optional[bool] = None,
 ) -> dict[str, Any]:
     configure_writer(
         repo,
@@ -222,6 +303,4 @@ def bootstrap_config(
         timeout_seconds=timeout_seconds,
         require_tests_for_approval=require_tests_for_approval,
     )
-    if work_trigger_confirmed is not None:
-        configure_work_trigger(repo, confirmed=work_trigger_confirmed)
     return load_config(repo)
