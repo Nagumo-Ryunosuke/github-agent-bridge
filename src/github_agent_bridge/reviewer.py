@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -49,17 +50,19 @@ class ReviewResult:
 
 
 def _run(cmd: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+    return subprocess.run(
+        cmd,
+        cwd=cwd,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+    )
 
 
 def ensure_base_is_ancestor(repo: Path, base_commit: str, head_ref: str) -> None:
-    """Reject implementation heads that are not descendants of the pinned task base.
-
-    The local reviewer executes PR code, so the branch-prefix and same-repository
-    checks in the watcher are not sufficient by themselves. The implementation
-    must also preserve the exact task ancestry contract before any PR test command
-    or Codex tool is executed.
-    """
     proc = subprocess.run(
         ["git", "merge-base", "--is-ancestor", base_commit, head_ref],
         cwd=repo,
@@ -79,13 +82,30 @@ def run_test_commands(worktree: Path, commands: list[str], timeout: int) -> list
     results: list[dict[str, Any]] = []
     for command in commands:
         try:
-            proc = subprocess.run(command, cwd=worktree, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
-            results.append({"command": command, "exit_code": proc.returncode, "output": proc.stdout[-8000:]})
+            # These commands are repository-owner configuration, not model-generated input.
+            proc = subprocess.run(
+                command,
+                cwd=worktree,
+                shell=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=timeout,
+            )
+            results.append({
+                "command": command,
+                "exit_code": proc.returncode,
+                "output": proc.stdout[-8000:],
+            })
         except subprocess.TimeoutExpired as exc:
             output = exc.stdout or ""
             if isinstance(output, bytes):
                 output = output.decode(errors="replace")
-            results.append({"command": command, "exit_code": 124, "output": (output + "\nTIMEOUT")[-8000:]})
+            results.append({
+                "command": command,
+                "exit_code": 124,
+                "output": (output + "\nTIMEOUT")[-8000:],
+            })
     return results
 
 
@@ -93,14 +113,17 @@ def build_review_prompt(task_id: str, base_commit: str, test_results: list[dict[
     test_text = json.dumps(test_results, ensure_ascii=False, indent=2)
     return f"""Review implementation for {task_id} at the current HEAD against base commit {base_commit}.
 
-You are the second-stage reviewer. ChatGPT already planned, implemented, and self-reviewed. Your job is adversarial verification on a real local checkout.
-
-Inspect the exact diff `{base_commit}...HEAD`, relevant surrounding code, and tests. Focus on correctness, regressions, security, data integrity, concurrency, compatibility, error handling, and missing tests. Do not modify files.
+You are the independent second-stage Codex reviewer. Inspect the exact diff
+`{base_commit}...HEAD`, relevant surrounding code, and tests. Focus on correctness,
+regressions, security, data integrity, concurrency, compatibility, error handling,
+and missing tests. Do not modify files and never merge the PR.
 
 Local test execution evidence gathered before your review:
 {test_text}
 
-Return only JSON matching the provided output schema. Use APPROVE only when there are no critical/major findings and local validation is acceptable. Use REVISE when code changes are required.
+Return only JSON matching the provided output schema. Use APPROVE only when there
+are no critical/major findings and local validation is acceptable. Use REVISE when
+code changes are required.
 """
 
 
@@ -119,6 +142,35 @@ def _parse_last_message(path: Path, test_results: list[dict[str, Any]]) -> Revie
     return result
 
 
+def _review_command(config: dict[str, Any], schema: Path, last_message: Path, prompt: str) -> list[str]:
+    review = config["review"]
+    if review.get("zero_personal_plus"):
+        credential_env = review.get("credential_env")
+        model = str(review.get("model") or "").strip()
+        if not isinstance(credential_env, str) or not credential_env or not os.environ.get(credential_env):
+            raise ReviewExecutionError(
+                "zero-personal Codex review requires a present credential environment variable"
+            )
+        if not model:
+            raise ReviewExecutionError("zero-personal Codex review requires an explicit model")
+    command = [
+        str(review["codex_command"]),
+        "exec",
+        "--ephemeral",
+        "--sandbox",
+        "read-only",
+    ]
+    model = str(review.get("model") or "").strip()
+    if model:
+        command.extend(["--model", model])
+    command.extend([
+        "--output-schema", str(schema),
+        "--output-last-message", str(last_message),
+        prompt,
+    ])
+    return command
+
+
 def review_pr_head(
     repo: Path,
     *,
@@ -130,7 +182,7 @@ def review_pr_head(
 ) -> ReviewResult:
     config = load_config(repo)
     if config["workflow"].get("reviewer") != "codex":
-        raise ReviewExecutionError("Codex review is disabled; ordinary Chat owns review")
+        raise ReviewExecutionError("local Codex exact-head review is required")
     timeout = int(config["review"]["timeout_seconds"])
     ref = f"refs/agent-bridge/pr-{pr_number}"
     run_git(repo, "fetch", "origin", f"+pull/{pr_number}/head:{ref}")
@@ -143,33 +195,42 @@ def review_pr_head(
         worktree = Path(tmp) / "worktree"
         run_git(repo, "worktree", "add", "--detach", str(worktree), ref)
         try:
-            tests = run_test_commands(worktree, list(config["review"]["test_commands"]), timeout)
+            tests = run_test_commands(
+                worktree,
+                list(config["review"]["test_commands"]),
+                timeout,
+            )
             schema = Path(tmp) / "codex-review.schema.json"
             schema.write_text(json.dumps(CODEX_REVIEW_SCHEMA, indent=2) + "\n", encoding="utf-8")
             last_message = Path(tmp) / "codex-review.json"
             prompt = build_review_prompt(task_id, base_commit, tests)
-            cmd = [
-                str(config["review"]["codex_command"]), "exec", "--ephemeral",
-                "--output-schema", str(schema), "--output-last-message", str(last_message), prompt,
-            ]
-            proc = command_runner(cmd, worktree, timeout)
+            command = _review_command(config, schema, last_message, prompt)
+            proc = command_runner(command, worktree, timeout)
             if proc.returncode != 0:
-                raise ReviewExecutionError(f"codex exec failed ({proc.returncode}): {proc.stderr[-4000:]}")
+                raise ReviewExecutionError(
+                    f"codex exec failed ({proc.returncode}): {proc.stderr[-4000:]}"
+                )
             result = _parse_last_message(last_message, tests)
-            # Local execution is authoritative. Missing required tests or any test failure prevents approval.
-            if not tests and bool(config["review"].get("require_tests_for_approval", True)) and result.verdict == "APPROVE":
+            if (
+                not tests
+                and bool(config["review"].get("require_tests_for_approval", True))
+                and result.verdict == "APPROVE"
+            ):
                 result.verdict = "REVISE"
                 result.findings.append({
                     "severity": "major",
                     "title": "No local test commands configured",
-                    "detail": "Configure `.ai/config.json` review.test_commands before unattended approval, or explicitly disable require_tests_for_approval.",
+                    "detail": (
+                        "Configure review.test_commands before unattended approval, "
+                        "or explicitly disable require_tests_for_approval."
+                    ),
                 })
             if any(item["exit_code"] != 0 for item in tests) and result.verdict == "APPROVE":
                 result.verdict = "REVISE"
                 result.findings.append({
                     "severity": "major",
                     "title": "Local validation failed",
-                    "detail": "At least one configured local test command failed; the implementation cannot be approved.",
+                    "detail": "At least one configured local test command failed.",
                 })
             return result
         finally:
